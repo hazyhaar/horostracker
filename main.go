@@ -124,9 +124,10 @@ func cmdServe(args []string) {
 	}
 	go registry.RunWatcher(ctx)
 
-	// --- LLM client + flow engine ---
+	// --- LLM client + flow engine + resolution ---
 	llmClient := llm.NewFromConfig(cfg.LLM)
 	flowEngine := llm.NewFlowEngine(llmClient, flowsDB, logger)
+	resEngine := llm.NewResolutionEngine(llmClient, flowsDB, logger)
 
 	providerCount := len(llmClient.Providers())
 	if providerCount > 0 {
@@ -142,6 +143,7 @@ func cmdServe(args []string) {
 	// --- HTTP mux (API + static) ---
 	a := auth.New(cfg.Auth.JWTSecret, cfg.Auth.TokenExpiryMin)
 	apiHandler := api.New(database, a)
+	apiHandler.SetResolutionEngine(resEngine)
 
 	mux := http.NewServeMux()
 	apiHandler.RegisterRoutes(mux)

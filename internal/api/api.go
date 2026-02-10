@@ -10,11 +10,13 @@ import (
 
 	"github.com/hazyhaar/horostracker/internal/auth"
 	"github.com/hazyhaar/horostracker/internal/db"
+	"github.com/hazyhaar/horostracker/internal/llm"
 )
 
 type API struct {
-	db   *db.DB
-	auth *auth.Auth
+	db        *db.DB
+	auth      *auth.Auth
+	resEngine *llm.ResolutionEngine
 }
 
 func New(database *db.DB, a *auth.Auth) *API {
@@ -50,6 +52,12 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	// User profile
 	mux.HandleFunc("GET /api/user/{handle}", a.handleGetUser)
 	mux.HandleFunc("GET /api/me", a.handleGetMe)
+
+	// Resolution + renders
+	a.RegisterResolutionRoutes(mux)
+
+	// Dataset export
+	a.RegisterExportRoutes(mux)
 }
 
 // --- Auth ---
