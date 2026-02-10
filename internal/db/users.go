@@ -10,7 +10,10 @@ type User struct {
 	ID                   string    `json:"id"`
 	Handle               string    `json:"handle"`
 	Email                *string   `json:"email,omitempty"`
+	IsBot                bool      `json:"is_bot"`
 	Reputation           int       `json:"reputation"`
+	HonorRate            float64   `json:"honor_rate"`
+	Credits              int       `json:"credits"`
 	BountytreescoreTotal int       `json:"bountytreescore_total"`
 	BountytreescoreTags  string    `json:"bountytreescore_tags"`
 	CreatedAt            time.Time `json:"created_at"`
@@ -46,10 +49,11 @@ func (db *DB) GetUserByHandle(handle string) (*User, string, error) {
 	var email sql.NullString
 	var passwordHash string
 	err := db.QueryRow(`
-		SELECT id, handle, email, password_hash, reputation, bountytreescore_total, bountytreescore_tags, created_at
+		SELECT id, handle, email, password_hash, is_bot, reputation, honor_rate, credits,
+		       bountytreescore_total, bountytreescore_tags, created_at
 		FROM users WHERE handle = ?`, handle).Scan(
-		&u.ID, &u.Handle, &email, &passwordHash, &u.Reputation,
-		&u.BountytreescoreTotal, &u.BountytreescoreTags, &u.CreatedAt)
+		&u.ID, &u.Handle, &email, &passwordHash, &u.IsBot, &u.Reputation,
+		&u.HonorRate, &u.Credits, &u.BountytreescoreTotal, &u.BountytreescoreTags, &u.CreatedAt)
 	if err != nil {
 		return nil, "", err
 	}
@@ -63,10 +67,11 @@ func (db *DB) GetUserByID(id string) (*User, error) {
 	u := &User{}
 	var email sql.NullString
 	err := db.QueryRow(`
-		SELECT id, handle, email, reputation, bountytreescore_total, bountytreescore_tags, created_at
+		SELECT id, handle, email, is_bot, reputation, honor_rate, credits,
+		       bountytreescore_total, bountytreescore_tags, created_at
 		FROM users WHERE id = ?`, id).Scan(
-		&u.ID, &u.Handle, &email, &u.Reputation,
-		&u.BountytreescoreTotal, &u.BountytreescoreTags, &u.CreatedAt)
+		&u.ID, &u.Handle, &email, &u.IsBot, &u.Reputation,
+		&u.HonorRate, &u.Credits, &u.BountytreescoreTotal, &u.BountytreescoreTags, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

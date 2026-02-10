@@ -74,7 +74,7 @@ func cmdServe(args []string) {
 		cfg.Server.Addr = *addr
 	}
 
-	// --- Database ---
+	// --- Databases ---
 	database, err := db.Open(cfg.Database.Path)
 	if err != nil {
 		logger.Error("opening database", "error", err)
@@ -82,6 +82,13 @@ func cmdServe(args []string) {
 	}
 	defer database.Close()
 	sqlDB := database.DB // underlying *sql.DB
+
+	flowsDB, err := db.OpenFlows(cfg.Database.FlowsPath)
+	if err != nil {
+		logger.Error("opening flows database", "error", err)
+		os.Exit(1)
+	}
+	defer flowsDB.Close()
 
 	// --- Trace store ---
 	traceStore := trace.NewStore(sqlDB)
@@ -143,7 +150,8 @@ func cmdServe(args []string) {
 	logger.Info("horostracker starting",
 		"version", version,
 		"addr", cfg.Server.Addr,
-		"database", cfg.Database.Path,
+		"nodes_db", cfg.Database.Path,
+		"flows_db", cfg.Database.FlowsPath,
 		"federation", cfg.Federation.Enabled,
 		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
 		"udp", "QUIC (HTTP/3 + MCP)",
@@ -155,8 +163,9 @@ func cmdServe(args []string) {
 		errCh <- srv.Start(ctx)
 	}()
 
-	// Keep trace store reference alive for future middleware wiring
+	// Keep references alive for future middleware wiring
 	_ = traceStore
+	_ = flowsDB
 
 	// Wait for signal or error
 	select {

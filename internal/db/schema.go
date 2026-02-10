@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS users (
     handle                  TEXT UNIQUE NOT NULL,
     email                   TEXT UNIQUE,
     password_hash           TEXT NOT NULL,
+    is_bot                  INTEGER DEFAULT 0 CHECK(is_bot IN (0, 1)),
     reputation              INTEGER DEFAULT 0,
+    honor_rate              REAL DEFAULT 1.0,
+    credits                 INTEGER DEFAULT 0,
     bountytreescore_total   INTEGER DEFAULT 0,
     bountytreescore_tags    TEXT DEFAULT '{}',
     created_at              DATETIME DEFAULT (datetime('now'))
@@ -77,17 +80,74 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 
 CREATE TABLE IF NOT EXISTS bounties (
+    id              TEXT PRIMARY KEY,
+    node_id         TEXT NOT NULL,
+    sponsor_id      TEXT NOT NULL,
+    amount          INTEGER NOT NULL,
+    currency        TEXT DEFAULT 'credits',
+    status          TEXT DEFAULT 'active' CHECK(status IN ('active','attributed','expired','contested')),
+    attribution     TEXT DEFAULT 'vote' CHECK(attribution IN ('sponsor','vote','split')),
+    winner_id       TEXT,
+    expires_at      DATETIME,
+    contested_at    DATETIME,
+    contest_reason  TEXT,
+    psp_ref         TEXT,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bounties_node ON bounties(node_id);
+CREATE INDEX IF NOT EXISTS idx_bounties_status ON bounties(status) WHERE status = 'active';
+
+-- Bounty stacking: multiple sponsors can contribute to same bounty
+CREATE TABLE IF NOT EXISTS bounty_contributions (
     id         TEXT PRIMARY KEY,
-    node_id    TEXT NOT NULL,
+    bounty_id  TEXT NOT NULL REFERENCES bounties(id),
     sponsor_id TEXT NOT NULL,
     amount     INTEGER NOT NULL,
-    currency   TEXT DEFAULT 'credits',
-    status     TEXT DEFAULT 'active' CHECK(status IN ('active','attributed','expired','contested')),
-    winner_id  TEXT,
-    expires_at DATETIME,
-    psp_ref    TEXT,
     created_at DATETIME DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_bounty_contrib_bounty ON bounty_contributions(bounty_id);
+
+-- Sources: URLs/documents attached to evidence nodes
+CREATE TABLE IF NOT EXISTS sources (
+    id          TEXT PRIMARY KEY,
+    node_id     TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    title       TEXT,
+    domain      TEXT,
+    content_hash TEXT,
+    trust_score REAL DEFAULT 0.5,
+    verified_at DATETIME,
+    created_at  DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_sources_node ON sources(node_id);
+CREATE INDEX IF NOT EXISTS idx_sources_domain ON sources(domain);
+
+-- Credit ledger: bot economy transactions
+CREATE TABLE IF NOT EXISTS credit_ledger (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    amount      INTEGER NOT NULL,
+    balance     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    ref_type    TEXT,
+    ref_id      TEXT,
+    created_at  DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_credit_ledger_user ON credit_ledger(user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_ledger_time ON credit_ledger(created_at);
+
+-- Reputation events: log of reputation changes
+CREATE TABLE IF NOT EXISTS reputation_events (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    delta       INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    ref_type    TEXT,
+    ref_id      TEXT,
+    created_at  DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rep_events_user ON reputation_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_rep_events_time ON reputation_events(created_at);
 
 CREATE TABLE IF NOT EXISTS adversarial_flags (
     node_id    TEXT PRIMARY KEY,
