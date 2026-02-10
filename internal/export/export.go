@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"time"
 
 	"github.com/hazyhaar/horostracker/internal/db"
@@ -128,8 +127,11 @@ func (e *Exporter) ExportCorrectedGarbageSet(w io.Writer, rootID string, resolut
 
 	anonMap := newAnonMap()
 
-	var objCount, evCount, advCount int
-	countTypes(tree, &objCount, &evCount, &advCount)
+	var objCount, evCount int
+	countTypes(tree, &objCount, &evCount)
+
+	// Query real adversarial challenge count from DB
+	advCount, _ := e.database.CountChallengesForNode(rootID)
 
 	cgs := CorrectedGarbageSet{
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
@@ -213,7 +215,7 @@ func maxDepth(node *db.Node, current int) int {
 	return max
 }
 
-func countTypes(node *db.Node, objections, evidence, adversarial *int) {
+func countTypes(node *db.Node, objections, evidence *int) {
 	switch node.NodeType {
 	case "objection":
 		*objections++
@@ -221,7 +223,7 @@ func countTypes(node *db.Node, objections, evidence, adversarial *int) {
 		*evidence++
 	}
 	for _, child := range node.Children {
-		countTypes(child, objections, evidence, adversarial)
+		countTypes(child, objections, evidence)
 	}
 }
 
@@ -250,13 +252,3 @@ func (m *anonMap) get(realID string) string {
 	return anon
 }
 
-// randomSuffix generates a short random string.
-func randomSuffix(n int) string {
-	const alphabet = "0123456789abcdef"
-	b := make([]byte, n)
-	for i := range b {
-		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		b[i] = alphabet[idx.Int64()]
-	}
-	return string(b)
-}

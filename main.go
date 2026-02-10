@@ -124,10 +124,11 @@ func cmdServe(args []string) {
 	}
 	go registry.RunWatcher(ctx)
 
-	// --- LLM client + flow engine + resolution ---
+	// --- LLM client + flow engine + resolution + challenges ---
 	llmClient := llm.NewFromConfig(cfg.LLM)
 	flowEngine := llm.NewFlowEngine(llmClient, flowsDB, logger)
 	resEngine := llm.NewResolutionEngine(llmClient, flowsDB, logger)
+	challengeRunner := llm.NewChallengeRunner(flowEngine, database, logger)
 
 	providerCount := len(llmClient.Providers())
 	if providerCount > 0 {
@@ -144,6 +145,7 @@ func cmdServe(args []string) {
 	a := auth.New(cfg.Auth.JWTSecret, cfg.Auth.TokenExpiryMin)
 	apiHandler := api.New(database, a)
 	apiHandler.SetResolutionEngine(resEngine)
+	apiHandler.SetChallengeRunner(challengeRunner)
 
 	mux := http.NewServeMux()
 	apiHandler.RegisterRoutes(mux)
@@ -189,7 +191,6 @@ func cmdServe(args []string) {
 	_ = traceStore
 	_ = flowsDB
 	_ = metricsDB
-	_ = flowEngine
 
 	// Wait for signal or error
 	select {

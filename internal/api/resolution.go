@@ -23,6 +23,11 @@ func (a *API) SetResolutionEngine(engine *llm.ResolutionEngine) {
 	a.resEngine = engine
 }
 
+// SetChallengeRunner injects the adversarial challenge runner.
+func (a *API) SetChallengeRunner(runner *llm.ChallengeRunner) {
+	a.challengeRunner = runner
+}
+
 func (a *API) handleGenerateResolution(w http.ResponseWriter, r *http.Request) {
 	if a.resEngine == nil {
 		jsonError(w, "no LLM providers configured — resolution generation unavailable", http.StatusServiceUnavailable)

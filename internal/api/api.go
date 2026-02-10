@@ -14,9 +14,10 @@ import (
 )
 
 type API struct {
-	db        *db.DB
-	auth      *auth.Auth
-	resEngine *llm.ResolutionEngine
+	db              *db.DB
+	auth            *auth.Auth
+	resEngine       *llm.ResolutionEngine
+	challengeRunner *llm.ChallengeRunner
 }
 
 func New(database *db.DB, a *auth.Auth) *API {
@@ -58,6 +59,9 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 
 	// Dataset export
 	a.RegisterExportRoutes(mux)
+
+	// Adversarial challenges
+	a.RegisterChallengeRoutes(mux)
 }
 
 // --- Auth ---

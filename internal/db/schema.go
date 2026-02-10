@@ -155,13 +155,45 @@ CREATE TABLE IF NOT EXISTS reputation_events (
 CREATE INDEX IF NOT EXISTS idx_rep_events_user ON reputation_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_rep_events_time ON reputation_events(created_at);
 
-CREATE TABLE IF NOT EXISTS adversarial_flags (
-    node_id    TEXT PRIMARY KEY,
-    flags      TEXT NOT NULL,
-    objective  TEXT,
-    revealed   INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT (datetime('now'))
+-- Adversarial challenges: flow-based evaluation of nodes/trees
+CREATE TABLE IF NOT EXISTS challenges (
+    id              TEXT PRIMARY KEY,
+    node_id         TEXT NOT NULL,
+    flow_name       TEXT NOT NULL,
+    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+    requested_by    TEXT NOT NULL,
+    target_provider TEXT,
+    target_model    TEXT,
+    score           REAL,
+    summary         TEXT,
+    flow_id         TEXT,
+    error           TEXT,
+    started_at      DATETIME,
+    completed_at    DATETIME,
+    created_at      DATETIME DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_challenges_node ON challenges(node_id);
+CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
+CREATE INDEX IF NOT EXISTS idx_challenges_flow ON challenges(flow_name);
+
+-- Moderation scores: multi-criteria quality assessment for nodes
+CREATE TABLE IF NOT EXISTS moderation_scores (
+    id              TEXT PRIMARY KEY,
+    node_id         TEXT NOT NULL,
+    evaluator       TEXT NOT NULL,
+    eval_source     TEXT DEFAULT 'auto' CHECK(eval_source IN ('auto','human','challenge')),
+    factual_score   REAL,
+    source_score    REAL,
+    argument_score  REAL,
+    civility_score  REAL,
+    overall_score   REAL,
+    flags           TEXT DEFAULT '[]',
+    notes           TEXT,
+    challenge_id    TEXT REFERENCES challenges(id),
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mod_scores_node ON moderation_scores(node_id);
+CREATE INDEX IF NOT EXISTS idx_mod_scores_source ON moderation_scores(eval_source);
 
 CREATE TABLE IF NOT EXISTS renders (
     id              TEXT PRIMARY KEY,
