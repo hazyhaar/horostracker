@@ -1,16 +1,24 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/hazyhaar/horostracker/internal/api"
 	"github.com/hazyhaar/horostracker/internal/auth"
 	"github.com/hazyhaar/horostracker/internal/config"
 	"github.com/hazyhaar/horostracker/internal/db"
+	horosmcp "github.com/hazyhaar/horostracker/internal/mcp"
+	"github.com/hazyhaar/horostracker/pkg/audit"
+	"github.com/hazyhaar/horostracker/pkg/chassis"
+	"github.com/hazyhaar/horostracker/pkg/mcprt"
+	"github.com/hazyhaar/horostracker/pkg/trace"
 )
 
 var version = "dev"
@@ -39,17 +47,19 @@ func printUsage() {
 	fmt.Println(`horostracker — proof-tree search engine
 
 Usage:
-  horostracker serve [--config config.toml] [--addr :8080]
+  horostracker serve [--config config.toml] [--addr :8443]
   horostracker version
   horostracker help
 
 Commands:
-  serve     Start the HTTP server
+  serve     Start the QUIC server (HTTP/3 + MCP over QUIC)
   version   Print version
   help      Show this help`)
 }
 
 func cmdServe(args []string) {
+	logger := slog.Default()
+
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.toml")
 	addr := fs.String("addr", "", "listen address (overrides config)")
@@ -57,47 +67,112 @@ func cmdServe(args []string) {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("loading config: %v", err)
+		logger.Error("loading config", "error", err)
+		os.Exit(1)
 	}
-
 	if *addr != "" {
 		cfg.Server.Addr = *addr
 	}
 
-	database, err := openDB(cfg)
+	// --- Database ---
+	database, err := db.Open(cfg.Database.Path)
 	if err != nil {
-		log.Fatalf("opening database: %v", err)
+		logger.Error("opening database", "error", err)
+		os.Exit(1)
 	}
 	defer database.Close()
+	sqlDB := database.DB // underlying *sql.DB
 
+	// --- Trace store ---
+	traceStore := trace.NewStore(sqlDB)
+	defer traceStore.Close()
+
+	// --- Audit logger ---
+	auditLog := audit.NewSQLiteLogger(sqlDB)
+	defer auditLog.Close()
+
+	// --- MCP tool registry (flight control) ---
+	registry := mcprt.NewRegistry(sqlDB)
+	if err := registry.Init(); err != nil {
+		logger.Error("init MCP tool registry", "error", err)
+		os.Exit(1)
+	}
+	horosmcp.SeedDefaultTools(sqlDB)
+
+	// --- Context with signal-based cancellation ---
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	// Load dynamic tools + start watcher
+	if err := registry.LoadTools(ctx); err != nil {
+		logger.Warn("loading dynamic MCP tools", "error", err)
+	}
+	go registry.RunWatcher(ctx)
+
+	// --- MCP server (core tools + dynamic tools) ---
+	mcpServer := horosmcp.NewServer(database, auditLog)
+	mcprt.Bridge(mcpServer, registry)
+
+	// --- HTTP mux (API + static) ---
 	a := auth.New(cfg.Auth.JWTSecret, cfg.Auth.TokenExpiryMin)
 	apiHandler := api.New(database, a)
 
 	mux := http.NewServeMux()
 	apiHandler.RegisterRoutes(mux)
 
-	// Serve static files
 	staticFS := http.FileServer(http.Dir("static"))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticFS))
-
-	// SPA: serve index.html for all non-API, non-static routes
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "static/index.html")
 	})
 
-	log.Printf("horostracker %s listening on %s", version, cfg.Server.Addr)
-	log.Printf("database: %s", cfg.Database.Path)
-	if cfg.Federation.Enabled {
-		log.Printf("federation: enabled")
-	} else {
-		log.Printf("federation: disabled (mononode)")
+	// --- QUIC chassis ---
+	srv, err := chassis.New(chassis.Config{
+		Addr:      cfg.Server.Addr,
+		CertFile:  cfg.Server.CertFile,
+		KeyFile:   cfg.Server.KeyFile,
+		Handler:   mux,
+		MCPServer: mcpServer,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.Error("creating chassis", "error", err)
+		os.Exit(1)
 	}
 
-	if err := http.ListenAndServe(cfg.Server.Addr, mux); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
-}
+	logger.Info("horostracker starting",
+		"version", version,
+		"addr", cfg.Server.Addr,
+		"database", cfg.Database.Path,
+		"federation", cfg.Federation.Enabled,
+		"transport", "QUIC (HTTP/3 + MCP)",
+	)
 
-func openDB(cfg *config.Config) (*db.DB, error) {
-	return db.Open(cfg.Database.Path)
+	// Start chassis in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start(ctx)
+	}()
+
+	// Keep trace store reference alive for future middleware wiring
+	_ = traceStore
+
+	// Wait for signal or error
+	select {
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
+	case err := <-errCh:
+		if err != nil {
+			logger.Error("server error", "error", err)
+		}
+	}
+
+	// Graceful shutdown
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5e9) // 5s
+	defer stopCancel()
+	if err := srv.Stop(stopCtx); err != nil {
+		logger.Error("shutdown error", "error", err)
+	}
+
+	logger.Info("horostracker stopped")
 }

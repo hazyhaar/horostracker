@@ -18,9 +18,98 @@ import (
 	"github.com/hazyhaar/horostracker/pkg/kit"
 )
 
+// Handler handles individual MCP-over-QUIC connections without owning a listener.
+// Used by the chassis for ALPN-based demuxing on a shared UDP socket.
+type Handler struct {
+	mcpServer *server.MCPServer
+	logger    *slog.Logger
+}
+
+// NewHandler creates an MCP connection handler for use with chassis demuxing.
+func NewHandler(mcpSrv *server.MCPServer, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{mcpServer: mcpSrv, logger: logger}
+}
+
+// ServeConn handles a single QUIC connection as an MCP session.
+func (h *Handler) ServeConn(ctx context.Context, conn *quic.Conn) {
+	remote := conn.RemoteAddr().String()
+	h.logger.Info("MCP connection accepted", "remote", remote)
+
+	stream, err := conn.AcceptStream(ctx)
+	if err != nil {
+		h.logger.Error("MCP accept stream failed", "remote", remote, "error", err)
+		conn.CloseWithError(ConnErrorProtocolViolation, "stream accept failed")
+		return
+	}
+
+	if err := ValidateMagicBytes(stream); err != nil {
+		h.logger.Error("MCP magic bytes invalid", "remote", remote, "error", err)
+		stream.CancelWrite(StreamErrorProtocolConfusion)
+		stream.CancelRead(StreamErrorProtocolConfusion)
+		conn.CloseWithError(ConnErrorProtocolViolation, "invalid magic bytes")
+		return
+	}
+
+	sessionID := "quic_" + db.NewID()[:8]
+	h.logger.Info("MCP session starting", "session", sessionID, "remote", remote)
+
+	sess := newSession(sessionID, stream)
+	if err := h.mcpServer.RegisterSession(ctx, sess); err != nil {
+		h.logger.Error("session register failed", "session", sessionID, "error", err)
+		stream.Close()
+		return
+	}
+	defer h.mcpServer.UnregisterSession(ctx, sessionID)
+
+	ctx = kit.WithTransport(ctx, "mcp_quic")
+	ctx = h.mcpServer.WithContext(ctx, sess)
+
+	go sess.writeNotifications(ctx, stream)
+
+	reader := bufio.NewReader(stream)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err != io.EOF && ctx.Err() == nil {
+				h.logger.Error("MCP read error", "session", sessionID, "error", err)
+			}
+			break
+		}
+
+		line = line[:len(line)-1]
+		if len(line) == 0 {
+			continue
+		}
+
+		response := h.mcpServer.HandleMessage(ctx, json.RawMessage(line))
+		if response == nil {
+			continue
+		}
+
+		data, err := json.Marshal(response)
+		if err != nil {
+			h.logger.Error("MCP marshal failed", "session", sessionID, "error", err)
+			continue
+		}
+
+		data = append(data, '\n')
+		if _, err := stream.Write(data); err != nil {
+			h.logger.Error("MCP write error", "session", sessionID, "error", err)
+			break
+		}
+	}
+
+	h.logger.Info("MCP session ended", "session", sessionID, "remote", remote)
+}
+
 // Listener accepts MCP-over-QUIC connections and dispatches to a shared MCPServer.
+// For standalone use (without chassis). The chassis uses Handler directly.
 type Listener struct {
 	listener  *quic.Listener
+	handler   *Handler
 	mcpServer *server.MCPServer
 	logger    *slog.Logger
 }
@@ -35,7 +124,12 @@ func NewListener(addr string, tlsCfg *tls.Config, mcpSrv *server.MCPServer, logg
 		return nil, err
 	}
 	logger.Info("MCP QUIC listener ready", "addr", addr)
-	return &Listener{listener: l, mcpServer: mcpSrv, logger: logger}, nil
+	return &Listener{
+		listener:  l,
+		handler:   NewHandler(mcpSrv, logger),
+		mcpServer: mcpSrv,
+		logger:    logger,
+	}, nil
 }
 
 func (l *Listener) Serve(ctx context.Context) error {
@@ -55,83 +149,12 @@ func (l *Listener) Serve(ctx context.Context) error {
 			continue
 		}
 
-		go l.handleConnection(ctx, conn)
+		go l.handler.ServeConn(ctx, conn)
 	}
 }
 
 func (l *Listener) Close() error {
 	return l.listener.Close()
-}
-
-func (l *Listener) handleConnection(ctx context.Context, conn *quic.Conn) {
-	remote := conn.RemoteAddr().String()
-	l.logger.Info("QUIC connection accepted", "remote", remote)
-
-	stream, err := conn.AcceptStream(ctx)
-	if err != nil {
-		l.logger.Error("QUIC accept stream failed", "remote", remote, "error", err)
-		conn.CloseWithError(ConnErrorProtocolViolation, "stream accept failed")
-		return
-	}
-
-	if err := ValidateMagicBytes(stream); err != nil {
-		l.logger.Error("QUIC magic bytes invalid", "remote", remote, "error", err)
-		stream.CancelWrite(StreamErrorProtocolConfusion)
-		stream.CancelRead(StreamErrorProtocolConfusion)
-		conn.CloseWithError(ConnErrorProtocolViolation, "invalid magic bytes")
-		return
-	}
-
-	sessionID := "quic_" + db.NewID()[:8]
-	l.logger.Info("QUIC MCP session starting", "session", sessionID, "remote", remote)
-
-	sess := newSession(sessionID, stream)
-	if err := l.mcpServer.RegisterSession(ctx, sess); err != nil {
-		l.logger.Error("session register failed", "session", sessionID, "error", err)
-		stream.Close()
-		return
-	}
-	defer l.mcpServer.UnregisterSession(ctx, sessionID)
-
-	ctx = kit.WithTransport(ctx, "mcp_quic")
-	ctx = l.mcpServer.WithContext(ctx, sess)
-
-	go sess.writeNotifications(ctx, stream)
-
-	reader := bufio.NewReader(stream)
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err != io.EOF && ctx.Err() == nil {
-				l.logger.Error("QUIC read error", "session", sessionID, "error", err)
-			}
-			break
-		}
-
-		line = line[:len(line)-1]
-		if len(line) == 0 {
-			continue
-		}
-
-		response := l.mcpServer.HandleMessage(ctx, json.RawMessage(line))
-		if response == nil {
-			continue
-		}
-
-		data, err := json.Marshal(response)
-		if err != nil {
-			l.logger.Error("QUIC marshal failed", "session", sessionID, "error", err)
-			continue
-		}
-
-		data = append(data, '\n')
-		if _, err := stream.Write(data); err != nil {
-			l.logger.Error("QUIC write error", "session", sessionID, "error", err)
-			break
-		}
-	}
-
-	l.logger.Info("QUIC MCP session ended", "session", sessionID, "remote", remote)
 }
 
 // session implements server.ClientSession for a single QUIC connection.

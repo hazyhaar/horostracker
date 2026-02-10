@@ -1,5 +1,7 @@
 [server]
-addr = ":8080"
+addr = ":8443"       # QUIC/UDP — serves HTTP/3 + MCP over QUIC on same port
+cert_file = ""       # empty = self-signed dev cert (ECDSA P-256)
+key_file = ""        # set both for production (Let's Encrypt etc.)
 
 [database]
 path = "data/nodes.db"

@@ -17,7 +17,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr string `toml:"addr"`
+	Addr     string `toml:"addr"`      // QUIC/UDP listen address (e.g. ":8443")
+	CertFile string `toml:"cert_file"` // TLS cert path (empty = self-signed dev cert)
+	KeyFile  string `toml:"key_file"`  // TLS key path
 }
 
 type DatabaseConfig struct {
@@ -50,7 +52,7 @@ type InstanceConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8080",
+			Addr: ":8443",
 		},
 		Database: DatabaseConfig{
 			Path: "data/nodes.db",
