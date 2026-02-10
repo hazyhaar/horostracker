@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hazyhaar/horostracker/internal/auth"
+	"github.com/hazyhaar/horostracker/internal/config"
 	"github.com/hazyhaar/horostracker/internal/db"
 	"github.com/hazyhaar/horostracker/internal/llm"
 )
@@ -18,6 +19,14 @@ type API struct {
 	auth            *auth.Auth
 	resEngine       *llm.ResolutionEngine
 	challengeRunner *llm.ChallengeRunner
+	botUserID       string
+	fedConfig       *config.FederationConfig
+	instConfig      *config.InstanceConfig
+}
+
+// SetBotUserID sets the bot user ID for auto-answer endpoints.
+func (a *API) SetBotUserID(id string) {
+	a.botUserID = id
 }
 
 func New(database *db.DB, a *auth.Auth) *API {
@@ -62,6 +71,15 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 
 	// Adversarial challenges
 	a.RegisterChallengeRoutes(mux)
+
+	// Bot
+	a.RegisterBotRoutes(mux)
+
+	// Federation
+	a.RegisterFederationRoutes(mux)
+
+	// Slug lookup
+	mux.HandleFunc("GET /api/q/{slug}", a.handleGetNodeBySlug)
 }
 
 // --- Auth ---
@@ -278,6 +296,9 @@ func (a *API) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Increment view count asynchronously
+	go a.db.IncrementViewCount(id)
+
 	jsonResp(w, http.StatusOK, tree)
 }
 
@@ -297,6 +318,8 @@ func (a *API) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	go a.db.IncrementViewCount(id)
 
 	jsonResp(w, http.StatusOK, node)
 }
@@ -514,6 +537,30 @@ func (a *API) handleGetMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, http.StatusOK, user)
+}
+
+// --- Slug lookup ---
+
+func (a *API) handleGetNodeBySlug(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		jsonError(w, "slug is required", http.StatusBadRequest)
+		return
+	}
+
+	node, err := a.db.GetNodeBySlug(slug)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			jsonError(w, "question not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	go a.db.IncrementViewCount(node.ID)
+
+	jsonResp(w, http.StatusOK, node)
 }
 
 // --- Helpers ---

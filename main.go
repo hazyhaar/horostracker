@@ -141,11 +141,28 @@ func cmdServe(args []string) {
 	mcpServer := horosmcp.NewServer(database, auditLog)
 	mcprt.Bridge(mcpServer, registry)
 
+	// --- Bot user (auto-create @horostracker) ---
+	var botUserID string
+	if cfg.Bot.Enabled {
+		botHash, _ := auth.New(cfg.Auth.JWTSecret, 0).HashPassword("bot-internal-" + cfg.Auth.JWTSecret)
+		botID, err := database.EnsureBotUser(cfg.Bot.Handle, botHash)
+		if err != nil {
+			logger.Error("creating bot user", "error", err)
+		} else {
+			botUserID = botID
+			// Ensure daily credit allowance
+			database.AddCredits(botID, cfg.Bot.CreditPerDay, "daily_allowance", "system", "startup")
+			logger.Info("bot user ready", "handle", cfg.Bot.Handle, "id", botID)
+		}
+	}
+
 	// --- HTTP mux (API + static) ---
 	a := auth.New(cfg.Auth.JWTSecret, cfg.Auth.TokenExpiryMin)
 	apiHandler := api.New(database, a)
 	apiHandler.SetResolutionEngine(resEngine)
 	apiHandler.SetChallengeRunner(challengeRunner)
+	apiHandler.SetBotUserID(botUserID)
+	apiHandler.SetFederationConfig(cfg.Federation, cfg.Instance)
 
 	mux := http.NewServeMux()
 	apiHandler.RegisterRoutes(mux)
@@ -176,6 +193,7 @@ func cmdServe(args []string) {
 		"nodes_db", cfg.Database.Path,
 		"flows_db", cfg.Database.FlowsPath,
 		"metrics_db", cfg.Database.MetricsPath,
+		"bot", cfg.Bot.Enabled,
 		"federation", cfg.Federation.Enabled,
 		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
 		"udp", "QUIC (HTTP/3 + MCP)",

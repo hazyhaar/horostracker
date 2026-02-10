@@ -12,6 +12,7 @@ type Config struct {
 	Database   DatabaseConfig   `toml:"database"`
 	Auth       AuthConfig       `toml:"auth"`
 	LLM        LLMConfig        `toml:"llm"`
+	Bot        BotConfig        `toml:"bot"`
 	Federation FederationConfig `toml:"federation"`
 	Instance   InstanceConfig   `toml:"instance"`
 }
@@ -42,8 +43,22 @@ type LLMConfig struct {
 	HuggingFaceKey  string `toml:"huggingface_api_key"`
 }
 
+type BotConfig struct {
+	Handle            string `toml:"handle"`              // bot username (default: "horostracker")
+	Enabled           bool   `toml:"enabled"`             // auto-create bot account on startup
+	CreditPerDay      int    `toml:"credit_per_day"`      // daily credit allowance
+	DefaultProvider   string `toml:"default_provider"`    // preferred LLM provider
+	DefaultModel      string `toml:"default_model"`       // preferred model
+}
+
 type FederationConfig struct {
-	Enabled bool `toml:"enabled"`
+	Enabled          bool     `toml:"enabled"`
+	InstanceURL      string   `toml:"instance_url"`       // public URL for this instance
+	SignatureAlgo    string   `toml:"signature_algorithm"` // ECDSA or Ed25519
+	PrivateKeyPath   string   `toml:"private_key_path"`   // PEM key for signing nodes
+	PublicKeyID      string   `toml:"public_key_id"`      // key identifier
+	VerifySignatures bool     `toml:"verify_signatures"`  // reject unsigned foreign nodes
+	PeerInstances    []string `toml:"peer_instances"`     // known peer URLs
 }
 
 type InstanceConfig struct {
@@ -65,12 +80,19 @@ func DefaultConfig() *Config {
 			JWTSecret:      "change-me-in-production",
 			TokenExpiryMin: 1440, // 24h
 		},
+		Bot: BotConfig{
+			Handle:       "horostracker",
+			Enabled:      true,
+			CreditPerDay: 1000,
+		},
 		Instance: InstanceConfig{
 			ID:   "local",
 			Name: "horostracker-local",
 		},
 		Federation: FederationConfig{
-			Enabled: false,
+			Enabled:          false,
+			SignatureAlgo:    "Ed25519",
+			VerifySignatures: true,
 		},
 	}
 }

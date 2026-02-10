@@ -25,6 +25,7 @@ type CreateUserInput struct {
 	Handle       string
 	Email        string
 	PasswordHash string
+	IsBot        bool
 }
 
 func (db *DB) CreateUser(input CreateUserInput) (*User, error) {
@@ -33,9 +34,13 @@ func (db *DB) CreateUser(input CreateUserInput) (*User, error) {
 	if input.Email != "" {
 		emailPtr = &input.Email
 	}
+	bot := 0
+	if input.IsBot {
+		bot = 1
+	}
 	_, err := db.Exec(`
-		INSERT INTO users (id, handle, email, password_hash)
-		VALUES (?, ?, ?, ?)`, id, input.Handle, emailPtr, input.PasswordHash)
+		INSERT INTO users (id, handle, email, password_hash, is_bot)
+		VALUES (?, ?, ?, ?, ?)`, id, input.Handle, emailPtr, input.PasswordHash, bot)
 	if err != nil {
 		return nil, fmt.Errorf("creating user: %w", err)
 	}
@@ -43,7 +48,97 @@ func (db *DB) CreateUser(input CreateUserInput) (*User, error) {
 		ID:     id,
 		Handle: input.Handle,
 		Email:  emailPtr,
+		IsBot:  input.IsBot,
+		Role:   "user",
 	}, nil
+}
+
+// EnsureBotUser creates the bot user if it doesn't exist. Returns the user ID.
+func (db *DB) EnsureBotUser(handle, passwordHash string) (string, error) {
+	user, _, err := db.GetUserByHandle(handle)
+	if err == nil {
+		return user.ID, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+	u, err := db.CreateUser(CreateUserInput{
+		Handle:       handle,
+		PasswordHash: passwordHash,
+		IsBot:        true,
+	})
+	if err != nil {
+		return "", err
+	}
+	return u.ID, nil
+}
+
+// AddCredits adds credits to a user's balance and logs the transaction.
+func (db *DB) AddCredits(userID string, amount int, reason, refType, refID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var balance int
+	err = tx.QueryRow("SELECT credits FROM users WHERE id = ?", userID).Scan(&balance)
+	if err != nil {
+		return err
+	}
+	newBalance := balance + amount
+
+	_, err = tx.Exec("UPDATE users SET credits = ? WHERE id = ?", newBalance, userID)
+	if err != nil {
+		return err
+	}
+
+	ledgerID := NewID()
+	_, err = tx.Exec(`INSERT INTO credit_ledger (id, user_id, amount, balance, reason, ref_type, ref_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, ledgerID, userID, amount, newBalance, reason, refType, refID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// DebitCredits removes credits; returns error if insufficient balance.
+func (db *DB) DebitCredits(userID string, amount int, reason, refType, refID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var balance int
+	err = tx.QueryRow("SELECT credits FROM users WHERE id = ?", userID).Scan(&balance)
+	if err != nil {
+		return err
+	}
+	if balance < amount {
+		return fmt.Errorf("insufficient credits: have %d, need %d", balance, amount)
+	}
+	newBalance := balance - amount
+
+	_, err = tx.Exec("UPDATE users SET credits = ? WHERE id = ?", newBalance, userID)
+	if err != nil {
+		return err
+	}
+
+	ledgerID := NewID()
+	_, err = tx.Exec(`INSERT INTO credit_ledger (id, user_id, amount, balance, reason, ref_type, ref_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, ledgerID, userID, -amount, newBalance, reason, refType, refID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// IncrementViewCount bumps a node's view count.
+func (db *DB) IncrementViewCount(nodeID string) {
+	db.Exec("UPDATE nodes SET view_count = view_count + 1 WHERE id = ?", nodeID)
 }
 
 func (db *DB) GetUserByHandle(handle string) (*User, string, error) {

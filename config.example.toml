@@ -16,8 +16,21 @@ token_expiry_min = 1440  # 24 hours
 id = "local"
 name = "horostracker-local"
 
+[bot]
+handle = "horostracker"       # bot username
+enabled = true                # auto-create bot on startup
+credit_per_day = 1000         # daily credit allowance
+default_provider = ""         # preferred LLM provider (empty = fallback chain)
+default_model = ""            # preferred model
+
 [federation]
 enabled = false
+instance_url = ""             # public URL (e.g. https://horostracker.example.com)
+signature_algorithm = "Ed25519"
+private_key_path = ""         # PEM key for signing nodes
+public_key_id = ""            # key identifier
+verify_signatures = true      # reject unsigned foreign nodes
+peer_instances = []           # known peer URLs
 
 # LLM API keys (all optional — without keys, instance runs in human-only mode)
 [llm]
