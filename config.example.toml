@@ -5,7 +5,8 @@ key_file = ""        # set both for production (Let's Encrypt etc.)
 
 [database]
 path = "data/nodes.db"
-flows_path = "data/flows.db"  # LLM forensic traces (separate SQLite)
+flows_path = "data/flows.db"    # LLM forensic traces (separate SQLite)
+metrics_path = "data/metrics.db" # Go native metrics (separate SQLite)
 
 [auth]
 jwt_secret = "change-me-in-production"

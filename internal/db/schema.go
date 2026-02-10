@@ -5,16 +5,19 @@ CREATE TABLE IF NOT EXISTS nodes (
     id              TEXT PRIMARY KEY,
     parent_id       TEXT REFERENCES nodes(id),
     root_id         TEXT NOT NULL,
+    slug            TEXT UNIQUE,
     node_type       TEXT NOT NULL CHECK(node_type IN ('question','answer','evidence','objection','precision','correction','synthesis','llm','resolution')),
     body            TEXT NOT NULL,
     author_id       TEXT NOT NULL,
     model_id        TEXT,
     score           INTEGER DEFAULT 0,
     temperature     TEXT DEFAULT 'cold' CHECK(temperature IN ('cold','warm','hot','critical')),
+    status          TEXT DEFAULT 'open' CHECK(status IN ('open','answered','bounty','closed')),
     metadata        TEXT DEFAULT '{}',
     is_accepted     INTEGER DEFAULT 0,
     is_critical     INTEGER DEFAULT 0,
     child_count     INTEGER DEFAULT 0,
+    view_count      INTEGER DEFAULT 0,
     depth           INTEGER DEFAULT 0,
     origin_instance TEXT DEFAULT 'local',
     signature       TEXT DEFAULT '',
@@ -28,6 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_root ON nodes(root_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
 CREATE INDEX IF NOT EXISTS idx_nodes_author ON nodes(author_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_temp ON nodes(temperature);
+CREATE INDEX IF NOT EXISTS idx_nodes_slug ON nodes(slug) WHERE slug IS NOT NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(body, content=nodes, content_rowid=rowid);
 
@@ -47,13 +51,15 @@ CREATE TABLE IF NOT EXISTS users (
     handle                  TEXT UNIQUE NOT NULL,
     email                   TEXT UNIQUE,
     password_hash           TEXT NOT NULL,
+    role                    TEXT DEFAULT 'user' CHECK(role IN ('user','moderator','admin')),
     is_bot                  INTEGER DEFAULT 0 CHECK(is_bot IN (0, 1)),
     reputation              INTEGER DEFAULT 0,
     honor_rate              REAL DEFAULT 1.0,
     credits                 INTEGER DEFAULT 0,
     bountytreescore_total   INTEGER DEFAULT 0,
     bountytreescore_tags    TEXT DEFAULT '{}',
-    created_at              DATETIME DEFAULT (datetime('now'))
+    created_at              DATETIME DEFAULT (datetime('now')),
+    last_seen_at            DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS votes (

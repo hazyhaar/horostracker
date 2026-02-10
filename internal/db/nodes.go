@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -10,16 +12,19 @@ type Node struct {
 	ID             string    `json:"id"`
 	ParentID       *string   `json:"parent_id,omitempty"`
 	RootID         string    `json:"root_id"`
+	Slug           *string   `json:"slug,omitempty"`
 	NodeType       string    `json:"node_type"`
 	Body           string    `json:"body"`
 	AuthorID       string    `json:"author_id"`
 	ModelID        *string   `json:"model_id,omitempty"`
 	Score          int       `json:"score"`
 	Temperature    string    `json:"temperature"`
+	Status         string    `json:"status"`
 	Metadata       string    `json:"metadata"`
 	IsAccepted     bool      `json:"is_accepted"`
 	IsCritical     bool      `json:"is_critical"`
 	ChildCount     int       `json:"child_count"`
+	ViewCount      int       `json:"view_count"`
 	Depth          int       `json:"depth"`
 	OriginInstance string    `json:"origin_instance"`
 	Signature      string    `json:"signature"`
@@ -27,6 +32,80 @@ type Node struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Children       []*Node   `json:"children,omitempty"`
+}
+
+// nodeColumns is the standard SELECT column list for nodes.
+const nodeColumns = `id, parent_id, root_id, slug, node_type, body, author_id, model_id,
+	score, temperature, status, metadata, is_accepted, is_critical, child_count,
+	view_count, depth, origin_instance, signature, binary_hash, created_at, updated_at`
+
+// nodeColumnsQualified returns nodeColumns with table alias prefix (e.g. "n.id, n.parent_id, ...").
+func nodeColumnsQualified(alias string) string {
+	return alias + `.id, ` + alias + `.parent_id, ` + alias + `.root_id, ` + alias + `.slug, ` + alias + `.node_type, ` + alias + `.body, ` + alias + `.author_id, ` + alias + `.model_id,
+	` + alias + `.score, ` + alias + `.temperature, ` + alias + `.status, ` + alias + `.metadata, ` + alias + `.is_accepted, ` + alias + `.is_critical, ` + alias + `.child_count,
+	` + alias + `.view_count, ` + alias + `.depth, ` + alias + `.origin_instance, ` + alias + `.signature, ` + alias + `.binary_hash, ` + alias + `.created_at, ` + alias + `.updated_at`
+}
+
+var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// makeSlug generates a URL-friendly slug from text body + short unique suffix.
+func makeSlug(body, id string) string {
+	s := strings.ToLower(body)
+	s = slugRe.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 60 {
+		// Cut at word boundary
+		if i := strings.LastIndex(s[:60], "-"); i > 20 {
+			s = s[:i]
+		} else {
+			s = s[:60]
+		}
+	}
+	if s == "" {
+		return id
+	}
+	// Append short ID suffix for uniqueness
+	suffix := id
+	if len(suffix) > 6 {
+		suffix = suffix[:6]
+	}
+	return s + "-" + suffix
+}
+
+// scanNodeRows scans all rows into a slice of Node pointers.
+func scanNodeRows(rows *sql.Rows) ([]*Node, error) {
+	var results []*Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, n)
+	}
+	return results, nil
+}
+
+// scanNode scans a node row into a Node struct. The row must match nodeColumns.
+func scanNode(s interface{ Scan(...any) error }) (*Node, error) {
+	n := &Node{}
+	var parentID, slug, modelID sql.NullString
+	err := s.Scan(
+		&n.ID, &parentID, &n.RootID, &slug, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
+		&n.Score, &n.Temperature, &n.Status, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
+		&n.ViewCount, &n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if parentID.Valid {
+		n.ParentID = &parentID.String
+	}
+	if slug.Valid {
+		n.Slug = &slug.String
+	}
+	if modelID.Valid {
+		n.ModelID = &modelID.String
+	}
+	return n, nil
 }
 
 type CreateNodeInput struct {
@@ -63,6 +142,13 @@ func (db *DB) CreateNode(input CreateNodeInput) (*Node, error) {
 		input.Metadata = "{}"
 	}
 
+	// Generate slug for question nodes (root-level)
+	var slug *string
+	if input.NodeType == "question" && (input.ParentID == nil || *input.ParentID == "") {
+		s := makeSlug(input.Body, id)
+		slug = &s
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, err
@@ -70,9 +156,9 @@ func (db *DB) CreateNode(input CreateNodeInput) (*Node, error) {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
-		INSERT INTO nodes (id, parent_id, root_id, node_type, body, author_id, model_id, metadata, depth, origin_instance)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'local')`,
-		id, input.ParentID, rootID, input.NodeType, input.Body, input.AuthorID, input.ModelID, input.Metadata, depth)
+		INSERT INTO nodes (id, parent_id, root_id, slug, node_type, body, author_id, model_id, metadata, depth, origin_instance)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local')`,
+		id, input.ParentID, rootID, slug, input.NodeType, input.Body, input.AuthorID, input.ModelID, input.Metadata, depth)
 	if err != nil {
 		return nil, fmt.Errorf("inserting node: %w", err)
 	}
@@ -99,26 +185,12 @@ func (db *DB) CreateNode(input CreateNodeInput) (*Node, error) {
 }
 
 func (db *DB) GetNode(id string) (*Node, error) {
-	n := &Node{}
-	var parentID, modelID sql.NullString
-	err := db.QueryRow(`
-		SELECT id, parent_id, root_id, node_type, body, author_id, model_id,
-		       score, temperature, metadata, is_accepted, is_critical, child_count,
-		       depth, origin_instance, signature, binary_hash, created_at, updated_at
-		FROM nodes WHERE id = ?`, id).Scan(
-		&n.ID, &parentID, &n.RootID, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
-		&n.Score, &n.Temperature, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
-		&n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	if parentID.Valid {
-		n.ParentID = &parentID.String
-	}
-	if modelID.Valid {
-		n.ModelID = &modelID.String
-	}
-	return n, nil
+	return scanNode(db.QueryRow(`SELECT `+nodeColumns+` FROM nodes WHERE id = ?`, id))
+}
+
+// GetNodeBySlug returns a node by its URL slug.
+func (db *DB) GetNodeBySlug(slug string) (*Node, error) {
+	return scanNode(db.QueryRow(`SELECT `+nodeColumns+` FROM nodes WHERE slug = ?`, slug))
 }
 
 func (db *DB) GetTree(nodeID string, maxDepth int) (*Node, error) {
@@ -129,22 +201,17 @@ func (db *DB) GetTree(nodeID string, maxDepth int) (*Node, error) {
 
 	rows, err := db.Query(`
 		WITH RECURSIVE tree AS (
-			SELECT id, parent_id, root_id, node_type, body, author_id, model_id,
-			       score, temperature, metadata, is_accepted, is_critical, child_count,
-			       depth, origin_instance, signature, binary_hash, created_at, updated_at,
-			       0 as rel_depth
+			SELECT `+nodeColumns+`, 0 as rel_depth
 			FROM nodes WHERE id = ?
 			UNION ALL
-			SELECT n.id, n.parent_id, n.root_id, n.node_type, n.body, n.author_id, n.model_id,
-			       n.score, n.temperature, n.metadata, n.is_accepted, n.is_critical, n.child_count,
-			       n.depth, n.origin_instance, n.signature, n.binary_hash, n.created_at, n.updated_at,
+			SELECT n.id, n.parent_id, n.root_id, n.slug, n.node_type, n.body, n.author_id, n.model_id,
+			       n.score, n.temperature, n.status, n.metadata, n.is_accepted, n.is_critical, n.child_count,
+			       n.view_count, n.depth, n.origin_instance, n.signature, n.binary_hash, n.created_at, n.updated_at,
 			       t.rel_depth + 1
 			FROM nodes n JOIN tree t ON n.parent_id = t.id
 			WHERE t.rel_depth < ?
 		)
-		SELECT id, parent_id, root_id, node_type, body, author_id, model_id,
-		       score, temperature, metadata, is_accepted, is_critical, child_count,
-		       depth, origin_instance, signature, binary_hash, created_at, updated_at
+		SELECT `+nodeColumns+`
 		FROM tree
 		ORDER BY depth ASC, score DESC`, nodeID, maxDepth)
 	if err != nil {
@@ -156,27 +223,14 @@ func (db *DB) GetTree(nodeID string, maxDepth int) (*Node, error) {
 	nodeMap[root.ID] = root
 
 	for rows.Next() {
-		n := &Node{}
-		var parentID, modelID sql.NullString
-		if err := rows.Scan(
-			&n.ID, &parentID, &n.RootID, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
-			&n.Score, &n.Temperature, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
-			&n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		n, err := scanNode(rows)
+		if err != nil {
 			return nil, err
 		}
-		if parentID.Valid {
-			n.ParentID = &parentID.String
-		}
-		if modelID.Valid {
-			n.ModelID = &modelID.String
-		}
-
 		if n.ID == root.ID {
 			continue
 		}
-
 		nodeMap[n.ID] = n
-
 		if n.ParentID != nil {
 			if parent, ok := nodeMap[*n.ParentID]; ok {
 				parent.Children = append(parent.Children, n)
@@ -235,9 +289,7 @@ func (db *DB) SearchNodes(query string, limit int) ([]*Node, error) {
 		limit = 20
 	}
 	rows, err := db.Query(`
-		SELECT n.id, n.parent_id, n.root_id, n.node_type, n.body, n.author_id, n.model_id,
-		       n.score, n.temperature, n.metadata, n.is_accepted, n.is_critical, n.child_count,
-		       n.depth, n.origin_instance, n.signature, n.binary_hash, n.created_at, n.updated_at
+		SELECT n.`+nodeColumnsQualified("n")+`
 		FROM nodes_fts fts
 		JOIN nodes n ON n.rowid = fts.rowid
 		WHERE nodes_fts MATCH ?
@@ -247,59 +299,16 @@ func (db *DB) SearchNodes(query string, limit int) ([]*Node, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var results []*Node
-	for rows.Next() {
-		n := &Node{}
-		var parentID, modelID sql.NullString
-		if err := rows.Scan(
-			&n.ID, &parentID, &n.RootID, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
-			&n.Score, &n.Temperature, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
-			&n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if parentID.Valid {
-			n.ParentID = &parentID.String
-		}
-		if modelID.Valid {
-			n.ModelID = &modelID.String
-		}
-		results = append(results, n)
-	}
-	return results, nil
+	return scanNodeRows(rows)
 }
 
 func (db *DB) GetNodesByRoot(rootID string) ([]*Node, error) {
-	rows, err := db.Query(`
-		SELECT id, parent_id, root_id, node_type, body, author_id, model_id,
-		       score, temperature, metadata, is_accepted, is_critical, child_count,
-		       depth, origin_instance, signature, binary_hash, created_at, updated_at
-		FROM nodes WHERE root_id = ?
-		ORDER BY depth ASC, score DESC`, rootID)
+	rows, err := db.Query(`SELECT `+nodeColumns+` FROM nodes WHERE root_id = ? ORDER BY depth ASC, score DESC`, rootID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var results []*Node
-	for rows.Next() {
-		n := &Node{}
-		var parentID, modelID sql.NullString
-		if err := rows.Scan(
-			&n.ID, &parentID, &n.RootID, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
-			&n.Score, &n.Temperature, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
-			&n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if parentID.Valid {
-			n.ParentID = &parentID.String
-		}
-		if modelID.Valid {
-			n.ModelID = &modelID.String
-		}
-		results = append(results, n)
-	}
-	return results, nil
+	return scanNodeRows(rows)
 }
 
 func (db *DB) GetHotQuestions(limit int) ([]*Node, error) {
@@ -307,9 +316,7 @@ func (db *DB) GetHotQuestions(limit int) ([]*Node, error) {
 		limit = 20
 	}
 	rows, err := db.Query(`
-		SELECT id, parent_id, root_id, node_type, body, author_id, model_id,
-		       score, temperature, metadata, is_accepted, is_critical, child_count,
-		       depth, origin_instance, signature, binary_hash, created_at, updated_at
+		SELECT `+nodeColumns+`
 		FROM nodes
 		WHERE node_type = 'question' AND parent_id IS NULL
 		ORDER BY
@@ -326,26 +333,7 @@ func (db *DB) GetHotQuestions(limit int) ([]*Node, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var results []*Node
-	for rows.Next() {
-		n := &Node{}
-		var parentID, modelID sql.NullString
-		if err := rows.Scan(
-			&n.ID, &parentID, &n.RootID, &n.NodeType, &n.Body, &n.AuthorID, &modelID,
-			&n.Score, &n.Temperature, &n.Metadata, &n.IsAccepted, &n.IsCritical, &n.ChildCount,
-			&n.Depth, &n.OriginInstance, &n.Signature, &n.BinaryHash, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if parentID.Valid {
-			n.ParentID = &parentID.String
-		}
-		if modelID.Valid {
-			n.ModelID = &modelID.String
-		}
-		results = append(results, n)
-	}
-	return results, nil
+	return scanNodeRows(rows)
 }
 
 func (db *DB) GetTagsForNode(nodeID string) ([]string, error) {

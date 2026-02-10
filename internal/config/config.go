@@ -23,8 +23,9 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path      string `toml:"path"`
-	FlowsPath string `toml:"flows_path"`
+	Path        string `toml:"path"`
+	FlowsPath   string `toml:"flows_path"`
+	MetricsPath string `toml:"metrics_path"`
 }
 
 type AuthConfig struct {
@@ -56,8 +57,9 @@ func DefaultConfig() *Config {
 			Addr: ":8080",
 		},
 		Database: DatabaseConfig{
-			Path:      "data/nodes.db",
-			FlowsPath: "data/flows.db",
+			Path:        "data/nodes.db",
+			FlowsPath:   "data/flows.db",
+			MetricsPath: "data/metrics.db",
 		},
 		Auth: AuthConfig{
 			JWTSecret:      "change-me-in-production",

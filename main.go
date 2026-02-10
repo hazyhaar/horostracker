@@ -14,6 +14,7 @@ import (
 	"github.com/hazyhaar/horostracker/internal/auth"
 	"github.com/hazyhaar/horostracker/internal/config"
 	"github.com/hazyhaar/horostracker/internal/db"
+	"github.com/hazyhaar/horostracker/internal/llm"
 	horosmcp "github.com/hazyhaar/horostracker/internal/mcp"
 	"github.com/hazyhaar/horostracker/pkg/audit"
 	"github.com/hazyhaar/horostracker/pkg/chassis"
@@ -90,6 +91,13 @@ func cmdServe(args []string) {
 	}
 	defer flowsDB.Close()
 
+	metricsDB, err := db.OpenMetrics(cfg.Database.MetricsPath)
+	if err != nil {
+		logger.Error("opening metrics database", "error", err)
+		os.Exit(1)
+	}
+	defer metricsDB.Close()
+
 	// --- Trace store ---
 	traceStore := trace.NewStore(sqlDB)
 	defer traceStore.Close()
@@ -115,6 +123,17 @@ func cmdServe(args []string) {
 		logger.Warn("loading dynamic MCP tools", "error", err)
 	}
 	go registry.RunWatcher(ctx)
+
+	// --- LLM client + flow engine ---
+	llmClient := llm.NewFromConfig(cfg.LLM)
+	flowEngine := llm.NewFlowEngine(llmClient, flowsDB, logger)
+
+	providerCount := len(llmClient.Providers())
+	if providerCount > 0 {
+		logger.Info("LLM providers configured", "count", providerCount, "providers", llmClient.Providers())
+	} else {
+		logger.Info("no LLM providers configured — human-only mode")
+	}
 
 	// --- MCP server (core tools + dynamic tools) ---
 	mcpServer := horosmcp.NewServer(database, auditLog)
@@ -152,6 +171,7 @@ func cmdServe(args []string) {
 		"addr", cfg.Server.Addr,
 		"nodes_db", cfg.Database.Path,
 		"flows_db", cfg.Database.FlowsPath,
+		"metrics_db", cfg.Database.MetricsPath,
 		"federation", cfg.Federation.Enabled,
 		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
 		"udp", "QUIC (HTTP/3 + MCP)",
@@ -166,6 +186,8 @@ func cmdServe(args []string) {
 	// Keep references alive for future middleware wiring
 	_ = traceStore
 	_ = flowsDB
+	_ = metricsDB
+	_ = flowEngine
 
 	// Wait for signal or error
 	select {
