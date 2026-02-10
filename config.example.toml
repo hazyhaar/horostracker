@@ -1,5 +1,5 @@
 [server]
-addr = ":8443"       # QUIC/UDP — serves HTTP/3 + MCP over QUIC on same port
+addr = ":8080"       # TCP (HTTP/1.1+HTTP/2) + UDP (QUIC HTTP/3 + MCP) on same port
 cert_file = ""       # empty = self-signed dev cert (ECDSA P-256)
 key_file = ""        # set both for production (Let's Encrypt etc.)
 

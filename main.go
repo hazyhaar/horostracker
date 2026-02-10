@@ -47,12 +47,12 @@ func printUsage() {
 	fmt.Println(`horostracker — proof-tree search engine
 
 Usage:
-  horostracker serve [--config config.toml] [--addr :8443]
+  horostracker serve [--config config.toml] [--addr :8080]
   horostracker version
   horostracker help
 
 Commands:
-  serve     Start the QUIC server (HTTP/3 + MCP over QUIC)
+  serve     Start the server (TCP/HTTP2 + QUIC/HTTP3 + MCP)
   version   Print version
   help      Show this help`)
 }
@@ -145,7 +145,8 @@ func cmdServe(args []string) {
 		"addr", cfg.Server.Addr,
 		"database", cfg.Database.Path,
 		"federation", cfg.Federation.Enabled,
-		"transport", "QUIC (HTTP/3 + MCP)",
+		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
+		"udp", "QUIC (HTTP/3 + MCP)",
 	)
 
 	// Start chassis in goroutine

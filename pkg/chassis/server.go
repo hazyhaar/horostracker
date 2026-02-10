@@ -1,12 +1,13 @@
-// Package chassis provides a unified QUIC server that multiplexes HTTP/3 and
-// MCP-over-QUIC on a single UDP port via ALPN routing.
+// Package chassis provides the unified server for horostracker.
 //
-// ALPN "h3"            → HTTP/3 handler (API + static files)
-// ALPN "horos-mcp-v1"  → MCP JSON-RPC over QUIC stream
+// Two listeners on the same port:
+//   - TCP → HTTP/1.1 + HTTP/2 (TLS) — curl-friendly REST API + static files
+//   - UDP → QUIC with ALPN demux:
+//     "h3"            → HTTP/3 (same handler as TCP)
+//     "horos-mcp-v1"  → MCP JSON-RPC over QUIC stream
 //
-// A single quic.Listener accepts all connections. Each connection is routed
-// by its negotiated ALPN protocol: h3 → http3.Server.ServeQUICConn,
-// horos-mcp-v1 → mcpquic.Handler.ServeConn.
+// The HTTP responses include an Alt-Svc header advertising HTTP/3,
+// so HTTP/2 clients that support it can upgrade transparently.
 //
 // In development mode, a self-signed ECDSA P-256 cert is generated automatically.
 // In production, supply cert/key files via config.
@@ -17,6 +18,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 
@@ -27,8 +29,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// Server is the unified QUIC chassis. It runs HTTP/3 for REST API and
-// MCP-over-QUIC for tool access on the same UDP port, demuxed by ALPN.
+// Server is the unified chassis. It runs:
+// - HTTP/1.1+HTTP/2 on TCP (curl-friendly, API first)
+// - HTTP/3 + MCP-over-QUIC on UDP (same port, ALPN demux)
 type Server struct {
 	addr        string
 	logger      *slog.Logger
@@ -37,17 +40,18 @@ type Server struct {
 	mcpServer   *server.MCPServer
 	mcpHandler  *mcpquic.Handler
 	h3Server    *http3.Server
-	listener    *quic.Listener
+	tcpServer   *http.Server
+	quicLn      *quic.Listener
 	mu          sync.Mutex
 }
 
 // Config holds configuration for the chassis server.
 type Config struct {
-	Addr      string            // UDP listen address (e.g. ":8443")
+	Addr      string            // Listen address (e.g. ":8080") — TCP + UDP same port
 	TLS       *tls.Config       // nil = auto-generate self-signed
 	CertFile  string            // production cert path
 	KeyFile   string            // production key path
-	Handler   http.Handler      // HTTP/3 handler (mux with API + static)
+	Handler   http.Handler      // HTTP handler (mux with API + static)
 	MCPServer *server.MCPServer // MCP server (nil = MCP disabled)
 	Logger    *slog.Logger
 }
@@ -91,12 +95,39 @@ func New(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Start opens a single QUIC listener and demuxes connections by ALPN.
-// HTTP/3 connections (ALPN "h3") are served by quic-go/http3.
-// MCP connections (ALPN "horos-mcp-v1") are served by mcpquic.Handler.
+// altSvcMiddleware wraps an http.Handler and adds Alt-Svc header
+// to advertise HTTP/3 availability on the same port.
+func altSvcMiddleware(addr string, next http.Handler) http.Handler {
+	_, port, _ := net.SplitHostPort(addr)
+	if port == "" {
+		port = "8080"
+	}
+	altSvc := fmt.Sprintf(`h3=":%s"; ma=86400`, port)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Alt-Svc", altSvc)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Start launches both TCP and UDP listeners.
+// TCP serves HTTP/1.1+HTTP/2 (TLS). UDP serves QUIC (HTTP/3 + MCP).
 func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 
+	handler := altSvcMiddleware(s.addr, s.httpHandler)
+
+	// --- TCP: HTTP/1.1 + HTTP/2 (TLS) ---
+	tcpTLS := s.tlsCfg.Clone()
+	tcpTLS.NextProtos = []string{"h2", "http/1.1"}
+
+	s.tcpServer = &http.Server{
+		Addr:      s.addr,
+		Handler:   handler,
+		TLSConfig: tcpTLS,
+	}
+
+	// --- UDP: QUIC (HTTP/3 + MCP) ---
 	qCfg := &quic.Config{
 		MaxStreamReceiveWindow:     10 * 1024 * 1024,
 		MaxConnectionReceiveWindow: 50 * 1024 * 1024,
@@ -104,59 +135,84 @@ func (s *Server) Start(ctx context.Context) error {
 		KeepAlivePeriod:            mcpquic.DefaultKeepAlive,
 	}
 
-	// Single QUIC listener with both ALPNs
 	ln, err := quic.ListenAddr(s.addr, s.tlsCfg, qCfg)
 	if err != nil {
 		s.mu.Unlock()
 		return fmt.Errorf("QUIC listen: %w", err)
 	}
-	s.listener = ln
+	s.quicLn = ln
 
-	// HTTP/3 server (used via ServeQUICConn, not its own listener)
 	s.h3Server = &http3.Server{
-		Handler: s.httpHandler,
+		Handler: handler,
 	}
 
 	s.mu.Unlock()
 
 	s.logger.Info("chassis started",
 		"addr", s.addr,
-		"http3", true,
-		"mcp", s.mcpHandler != nil,
+		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
+		"udp", "QUIC (HTTP/3 + MCP)",
 	)
 
-	// Accept loop: demux by ALPN
-	for {
-		conn, err := ln.Accept(ctx)
+	// Start TCP server in goroutine
+	errCh := make(chan error, 2)
+	go func() {
+		// TLS is configured via TLSConfig, use ListenAndServeTLS with empty strings
+		// to use the TLS config's certs
+		tcpLn, err := tls.Listen("tcp", s.addr, tcpTLS)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil // clean shutdown
-			}
-			return fmt.Errorf("QUIC accept: %w", err)
+			errCh <- fmt.Errorf("TCP listen: %w", err)
+			return
 		}
+		s.logger.Info("TCP listener ready", "addr", s.addr, "proto", "HTTP/1.1+HTTP/2")
+		if err := s.tcpServer.Serve(tcpLn); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("TCP: %w", err)
+		}
+	}()
 
-		alpn := conn.ConnectionState().TLS.NegotiatedProtocol
-		switch alpn {
-		case "h3":
-			go func() {
-				if err := s.h3Server.ServeQUICConn(conn); err != nil {
-					s.logger.Debug("HTTP/3 conn done", "remote", conn.RemoteAddr(), "error", err)
+	// QUIC accept loop: demux by ALPN
+	go func() {
+		for {
+			conn, err := ln.Accept(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
 				}
-			}()
-		case mcpquic.ALPNProtocolMCP:
-			if s.mcpHandler != nil {
-				go s.mcpHandler.ServeConn(ctx, conn)
-			} else {
-				conn.CloseWithError(quic.ApplicationErrorCode(0x10), "MCP not enabled")
+				errCh <- fmt.Errorf("QUIC accept: %w", err)
+				return
 			}
-		default:
-			s.logger.Warn("unknown ALPN, closing", "alpn", alpn, "remote", conn.RemoteAddr())
-			conn.CloseWithError(quic.ApplicationErrorCode(0x11), "unsupported ALPN: "+alpn)
+
+			alpn := conn.ConnectionState().TLS.NegotiatedProtocol
+			switch alpn {
+			case "h3":
+				go func() {
+					if err := s.h3Server.ServeQUICConn(conn); err != nil {
+						s.logger.Debug("HTTP/3 conn done", "remote", conn.RemoteAddr(), "error", err)
+					}
+				}()
+			case mcpquic.ALPNProtocolMCP:
+				if s.mcpHandler != nil {
+					go s.mcpHandler.ServeConn(ctx, conn)
+				} else {
+					conn.CloseWithError(quic.ApplicationErrorCode(0x10), "MCP not enabled")
+				}
+			default:
+				s.logger.Warn("unknown ALPN, closing", "alpn", alpn, "remote", conn.RemoteAddr())
+				conn.CloseWithError(quic.ApplicationErrorCode(0x11), "unsupported ALPN: "+alpn)
+			}
 		}
+	}()
+
+	// Wait for context cancellation or error
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
 	}
 }
 
-// Stop gracefully shuts down the chassis.
+// Stop gracefully shuts down both TCP and QUIC listeners.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,8 +220,13 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("chassis stopping")
 
 	var firstErr error
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil && firstErr == nil {
+	if s.tcpServer != nil {
+		if err := s.tcpServer.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.quicLn != nil {
+		if err := s.quicLn.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
