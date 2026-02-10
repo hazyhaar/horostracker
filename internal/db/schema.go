@@ -106,4 +106,74 @@ CREATE TABLE IF NOT EXISTS renders (
     fidelity_score  INTEGER,
     created_at      DATETIME DEFAULT (datetime('now'))
 );
+
+-- Observability: audit log
+CREATE TABLE IF NOT EXISTS audit_log (
+    entry_id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    transport TEXT NOT NULL DEFAULT 'http',
+    user_id TEXT,
+    request_id TEXT,
+    parameters TEXT,
+    result TEXT,
+    error_message TEXT,
+    duration_ms INTEGER,
+    status TEXT NOT NULL DEFAULT 'success'
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+
+-- Observability: SQL trace persistence
+CREATE TABLE IF NOT EXISTS sql_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT,
+    op TEXT NOT NULL,
+    query TEXT NOT NULL,
+    duration_us INTEGER NOT NULL,
+    error TEXT,
+    timestamp INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sql_traces_ts ON sql_traces(timestamp);
+CREATE INDEX IF NOT EXISTS idx_sql_traces_tid ON sql_traces(trace_id) WHERE trace_id != '';
+CREATE INDEX IF NOT EXISTS idx_sql_traces_slow ON sql_traces(duration_us) WHERE duration_us > 100000;
+
+-- Flight control: MCP tools registry (hot-reload from SQLite)
+CREATE TABLE IF NOT EXISTS mcp_tools_registry (
+    tool_name TEXT PRIMARY KEY,
+    tool_category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    input_schema TEXT NOT NULL,
+    handler_type TEXT NOT NULL CHECK(handler_type IN ('sql_query', 'sql_script')),
+    handler_config TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER,
+    created_by TEXT,
+    version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tools_active ON mcp_tools_registry(is_active);
+
+CREATE TABLE IF NOT EXISTS mcp_tools_history (
+    history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name TEXT NOT NULL,
+    tool_category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    input_schema TEXT NOT NULL,
+    handler_type TEXT NOT NULL,
+    handler_config TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    changed_by TEXT,
+    changed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    change_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_history_tool ON mcp_tools_history(tool_name, version DESC);
+
+CREATE TRIGGER IF NOT EXISTS trg_mcp_tools_updated_at
+AFTER UPDATE ON mcp_tools_registry
+FOR EACH ROW
+BEGIN
+    UPDATE mcp_tools_registry SET updated_at = strftime('%s', 'now') WHERE tool_name = NEW.tool_name;
+END;
 `

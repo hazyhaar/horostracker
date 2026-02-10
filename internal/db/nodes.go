@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -512,6 +511,3 @@ type ThankEntry struct {
 	Message   string `json:"message,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
-
-// Ensure json is used (avoid unused import)
-var _ = json.Marshal
