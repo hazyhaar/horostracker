@@ -1,0 +1,25 @@
+[server]
+addr = ":8080"
+
+[database]
+path = "data/nodes.db"
+
+[auth]
+jwt_secret = "change-me-in-production"
+token_expiry_min = 1440  # 24 hours
+
+[instance]
+id = "local"
+name = "horostracker-local"
+
+[federation]
+enabled = false
+
+# LLM API keys (all optional — without keys, instance runs in human-only mode)
+[llm]
+gemini_api_key = ""
+mistral_api_key = ""
+openrouter_api_key = ""
+groq_api_key = ""
+anthropic_api_key = ""
+huggingface_api_key = ""
