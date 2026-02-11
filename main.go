@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/hazyhaar/horostracker/internal/api"
@@ -124,11 +125,12 @@ func cmdServe(args []string) {
 	}
 	go registry.RunWatcher(ctx)
 
-	// --- LLM client + flow engine + resolution + challenges ---
+	// --- LLM client + flow engine + resolution + challenges + replay ---
 	llmClient := llm.NewFromConfig(cfg.LLM)
 	flowEngine := llm.NewFlowEngine(llmClient, flowsDB, logger)
 	resEngine := llm.NewResolutionEngine(llmClient, flowsDB, logger)
 	challengeRunner := llm.NewChallengeRunner(flowEngine, database, logger)
+	replayEngine := llm.NewReplayEngine(llmClient, flowsDB, logger)
 
 	providerCount := len(llmClient.Providers())
 	if providerCount > 0 {
@@ -161,6 +163,10 @@ func cmdServe(args []string) {
 	apiHandler := api.New(database, a)
 	apiHandler.SetResolutionEngine(resEngine)
 	apiHandler.SetChallengeRunner(challengeRunner)
+	apiHandler.SetReplayEngine(replayEngine)
+	apiHandler.SetFlowsDB(flowsDB, cfg.Database.FlowsPath)
+	apiHandler.SetMetricsDB(metricsDB, cfg.Database.MetricsPath)
+	apiHandler.SetLLMClient(llmClient)
 	apiHandler.SetBotUserID(botUserID)
 	apiHandler.SetFederationConfig(cfg.Federation, cfg.Instance)
 
@@ -187,12 +193,23 @@ func cmdServe(args []string) {
 		os.Exit(1)
 	}
 
+	// Count nodes for startup display
+	var nodeCount int
+	database.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
+	var flowStepCount int
+	flowsDB.QueryRow("SELECT COUNT(*) FROM flow_steps").Scan(&flowStepCount)
+
 	logger.Info("horostracker starting",
 		"version", version,
+		"binary_hash", api.BinaryHash(),
+		"go_version", runtime.Version(),
 		"addr", cfg.Server.Addr,
 		"nodes_db", cfg.Database.Path,
 		"flows_db", cfg.Database.FlowsPath,
 		"metrics_db", cfg.Database.MetricsPath,
+		"node_count", nodeCount,
+		"flow_steps", flowStepCount,
+		"providers", providerCount,
 		"bot", cfg.Bot.Enabled,
 		"federation", cfg.Federation.Enabled,
 		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
@@ -207,8 +224,6 @@ func cmdServe(args []string) {
 
 	// Keep references alive for future middleware wiring
 	_ = traceStore
-	_ = flowsDB
-	_ = metricsDB
 
 	// Wait for signal or error
 	select {
