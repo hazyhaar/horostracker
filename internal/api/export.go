@@ -73,7 +73,7 @@ func (a *API) handleExportGarbageSet(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleExportAll(w http.ResponseWriter, r *http.Request) {
 	exporter := export.NewExporter(a.db)
 	w.Header().Set("Content-Type", "application/jsonl")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"questionsuivie-dataset.jsonl\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"horostracker-dataset.jsonl\"")
 	if err := exporter.ExportAllTrees(w); err != nil {
 		jsonError(w, "export failed: "+err.Error(), http.StatusInternalServerError)
 	}
