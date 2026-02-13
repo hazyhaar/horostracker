@@ -106,6 +106,9 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	// Federation
 	a.RegisterFederationRoutes(mux)
 
+	// Envelopes (piece routing)
+	a.RegisterEnvelopeRoutes(mux)
+
 	// Integrity
 	a.RegisterIntegrityRoutes(mux)
 
