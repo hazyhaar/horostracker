@@ -311,6 +311,34 @@ func (db *DB) ListEnvelopesByBatch(batchID string) ([]*Envelope, error) {
 	return scanEnvelopeRows(rows)
 }
 
+// ClaimEnvelope assigns an unclaimed (source_user_id IS NULL) envelope to a user.
+// Returns error if already claimed or not found.
+func (db *DB) ClaimEnvelope(envelopeID, userID string) error {
+	res, err := db.Exec(`
+		UPDATE envelopes SET source_user_id = ?, updated_at = datetime('now')
+		WHERE id = ? AND source_user_id IS NULL`,
+		userID, envelopeID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("envelope not found or already claimed")
+	}
+	return nil
+}
+
+// GetEnvelopeStatus returns only the status fields of an envelope (no user data).
+func (db *DB) GetEnvelopeStatus(id string) (status string, targetCount, deliveredCount int, err error) {
+	err = db.QueryRow(`
+		SELECT status, target_count, delivered_count
+		FROM envelopes WHERE id = ?`, id).Scan(&status, &targetCount, &deliveredCount)
+	return
+}
+
 // ExpireEnvelopes marks all overdue envelopes as expired. Returns the count.
 func (db *DB) ExpireEnvelopes() (int64, error) {
 	res, err := db.Exec(`

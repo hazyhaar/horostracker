@@ -12,12 +12,15 @@ import (
 // RegisterEnvelopeRoutes registers envelope routing endpoints.
 func (a *API) RegisterEnvelopeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/envelope", a.handleCreateEnvelope)
+	mux.HandleFunc("POST /api/envelope/anon", a.handleCreateAnonEnvelope)
 	mux.HandleFunc("GET /api/envelope/{id}", a.handleGetEnvelope)
+	mux.HandleFunc("GET /api/envelope/{id}/status", a.handleGetEnvelopeStatus)
+	mux.HandleFunc("POST /api/envelope/{id}/claim", a.handleClaimEnvelope)
 	mux.HandleFunc("GET /api/envelopes", a.handleListEnvelopes)
 	mux.HandleFunc("GET /api/envelopes/batch/{batchID}", a.handleListBatchEnvelopes)
 	mux.HandleFunc("POST /api/envelope/{id}/deliver/{targetID}", a.handleDeliverTarget)
 	mux.HandleFunc("POST /api/envelope/{id}/fail/{targetID}", a.handleFailTarget)
-	mux.HandleFunc("POST /api/envelope/{id}/status", a.handleUpdateEnvelopeStatus)
+	mux.HandleFunc("POST /api/envelope/{id}/transition", a.handleUpdateEnvelopeStatus)
 	mux.HandleFunc("POST /api/envelopes/expire", a.handleExpireEnvelopes)
 }
 
@@ -265,6 +268,130 @@ func (a *API) handleUpdateEnvelopeStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonResp(w, http.StatusOK, map[string]string{"status": req.Status})
+}
+
+// handleCreateAnonEnvelope creates an envelope WITHOUT authentication.
+// source_user_id stays NULL. The caller receives the envelope_id as a claim ticket.
+// POST /api/envelope/anon
+func (a *API) handleCreateAnonEnvelope(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceType     string                 `json:"source_type"`
+		SourceCallback *string                `json:"source_callback"`
+		BatchID        *string                `json:"batch_id"`
+		PieceHash      string                 `json:"piece_hash"`
+		TTLMinutes     int                    `json:"ttl_minutes"`
+		Targets        []db.CreateTargetInput `json:"targets"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.PieceHash == "" {
+		jsonError(w, "piece_hash is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Targets) == 0 {
+		jsonError(w, "at least one target is required", http.StatusBadRequest)
+		return
+	}
+
+	validSources := map[string]bool{
+		"witheout": true, "api": true,
+	}
+	if !validSources[req.SourceType] {
+		jsonError(w, "anon envelopes only allowed from witheout or api", http.StatusBadRequest)
+		return
+	}
+
+	validTargets := map[string]bool{
+		"horostracker": true, "googledrive": true, "webhook": true,
+		"email": true, "s3": true, "ipfs": true,
+	}
+	for _, t := range req.Targets {
+		if !validTargets[t.TargetType] {
+			jsonError(w, "invalid target_type: "+t.TargetType, http.StatusBadRequest)
+			return
+		}
+	}
+
+	envelope, err := a.db.CreateEnvelope(db.CreateEnvelopeInput{
+		BatchID:        req.BatchID,
+		SourceType:     req.SourceType,
+		SourceUserID:   nil, // anonymous — no user
+		SourceNodeID:   nil, // no target node yet
+		SourceCallback: req.SourceCallback,
+		PieceHash:      req.PieceHash,
+		TTLMinutes:     req.TTLMinutes,
+		Targets:        req.Targets,
+	})
+	if err != nil {
+		log.Printf("error creating anon envelope: %v", err)
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResp(w, http.StatusCreated, map[string]interface{}{
+		"envelope_id": envelope.ID,
+		"status":      envelope.Status,
+		"expires_at":  envelope.ExpiresAt,
+		"targets":     len(envelope.Targets),
+	})
+}
+
+// handleGetEnvelopeStatus returns only the delivery status of an envelope.
+// NO authentication required — knowing the envelope_id is the proof.
+// Returns minimal data: status + delivery progress. No user info, no piece data.
+// GET /api/envelope/{id}/status
+func (a *API) handleGetEnvelopeStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	status, targetCount, deliveredCount, err := a.db.GetEnvelopeStatus(id)
+	if err != nil {
+		jsonError(w, "envelope not found", http.StatusNotFound)
+		return
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"envelope_id":     id,
+		"status":          status,
+		"target_count":    targetCount,
+		"delivered_count": deliveredCount,
+	})
+}
+
+// handleClaimEnvelope assigns an unclaimed anonymous envelope to the authenticated user.
+// The user must present the envelope_id (their claim ticket) + a valid JWT.
+// POST /api/envelope/{id}/claim  {"node_id": "optional — where to attach"}
+func (a *API) handleClaimEnvelope(w http.ResponseWriter, r *http.Request) {
+	claims := a.auth.ExtractClaims(r)
+	if claims == nil {
+		jsonError(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	envID := r.PathValue("id")
+	if envID == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := a.db.ClaimEnvelope(envID, claims.UserID); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	envelope, err := a.db.GetEnvelope(envID)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	jsonResp(w, http.StatusOK, envelope)
 }
 
 // handleExpireEnvelopes is an admin/cron endpoint to expire overdue envelopes.
