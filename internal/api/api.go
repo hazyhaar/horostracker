@@ -78,6 +78,9 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	// Federation
 	a.RegisterFederationRoutes(mux)
 
+	// Envelopes (piece routing)
+	a.RegisterEnvelopeRoutes(mux)
+
 	// Slug lookup
 	mux.HandleFunc("GET /api/q/{slug}", a.handleGetNodeBySlug)
 }

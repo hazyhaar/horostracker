@@ -274,4 +274,40 @@ FOR EACH ROW
 BEGIN
     UPDATE mcp_tools_registry SET updated_at = strftime('%s', 'now') WHERE tool_name = NEW.tool_name;
 END;
+
+-- Envelopes: persistent routing tickets for piece transit (no content stored)
+CREATE TABLE IF NOT EXISTS envelopes (
+    id              TEXT PRIMARY KEY,
+    batch_id        TEXT,
+    source_type     TEXT NOT NULL CHECK(source_type IN ('horostracker','witheout','api','mcp')),
+    source_user_id  TEXT REFERENCES users(id),
+    source_node_id  TEXT REFERENCES nodes(id),
+    source_callback TEXT,
+    piece_hash      TEXT NOT NULL,
+    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','dispatched','processing','delivered','partial','failed','expired')),
+    target_count    INTEGER DEFAULT 0,
+    delivered_count INTEGER DEFAULT 0,
+    error           TEXT,
+    expires_at      DATETIME NOT NULL,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_envelopes_batch ON envelopes(batch_id) WHERE batch_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_envelopes_user ON envelopes(source_user_id) WHERE source_user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_envelopes_status ON envelopes(status) WHERE status NOT IN ('delivered','expired');
+CREATE INDEX IF NOT EXISTS idx_envelopes_expires ON envelopes(expires_at) WHERE status NOT IN ('delivered','expired');
+
+-- Envelope targets: multi-delivery destinations per envelope
+CREATE TABLE IF NOT EXISTS envelope_targets (
+    id              TEXT PRIMARY KEY,
+    envelope_id     TEXT NOT NULL REFERENCES envelopes(id),
+    target_type     TEXT NOT NULL CHECK(target_type IN ('horostracker','googledrive','webhook','email','s3','ipfs')),
+    target_config   TEXT DEFAULT '{}',
+    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed','skipped')),
+    delivered_at    DATETIME,
+    error           TEXT,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_envelope_targets_env ON envelope_targets(envelope_id);
+CREATE INDEX IF NOT EXISTS idx_envelope_targets_status ON envelope_targets(status) WHERE status = 'pending';
 `
