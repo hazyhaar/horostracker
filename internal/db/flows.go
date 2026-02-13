@@ -42,8 +42,15 @@ func OpenFlows(path string) (*FlowsDB, error) {
 }
 
 func (db *FlowsDB) migrate() error {
-	_, err := db.Exec(flowsSchema)
-	return err
+	if _, err := db.Exec(flowsSchema); err != nil {
+		return err
+	}
+	// Safe column additions (ignore errors if columns already exist)
+	db.Exec(`ALTER TABLE flow_steps ADD COLUMN replay_of_id TEXT REFERENCES flow_steps(id)`)
+	db.Exec(`ALTER TABLE flow_steps ADD COLUMN dispatch_id TEXT`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_replay ON flow_steps(replay_of_id) WHERE replay_of_id IS NOT NULL`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_dispatch ON flow_steps(dispatch_id) WHERE dispatch_id IS NOT NULL`)
+	return nil
 }
 
 const flowsSchema = `
@@ -103,4 +110,36 @@ CREATE TABLE IF NOT EXISTS llm_evals (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_evals_response ON llm_evals(response_id);
 CREATE INDEX IF NOT EXISTS idx_llm_evals_type ON llm_evals(eval_type);
+
+-- Replay: replay_of_id column on flow_steps (added via migration-safe approach)
+-- Note: SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN,
+-- so we create a separate migration table and use it as a flag.
+CREATE TABLE IF NOT EXISTS _migrations (key TEXT PRIMARY KEY, applied_at DATETIME DEFAULT (datetime('now')));
+
+-- Replay batches: bulk replay tracking
+CREATE TABLE IF NOT EXISTS replay_batches (
+    id                  TEXT PRIMARY KEY,
+    original_model      TEXT NOT NULL,
+    replay_model        TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    filter_tag          TEXT,
+    total_steps         INTEGER,
+    improvements        INTEGER,
+    regressions         INTEGER,
+    unchanged           INTEGER,
+    status              TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
+    started_at          DATETIME DEFAULT (datetime('now')),
+    completed_at        DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_replay_batches_status ON replay_batches(status);
+
+-- Dispatches: parallel multi-model inference
+CREATE TABLE IF NOT EXISTS dispatches (
+    id          TEXT PRIMARY KEY,
+    prompt_hash TEXT NOT NULL,
+    models      TEXT NOT NULL,
+    status      TEXT DEFAULT 'running',
+    created_at  DATETIME DEFAULT (datetime('now')),
+    completed_at DATETIME
+);
 `

@@ -274,4 +274,97 @@ FOR EACH ROW
 BEGIN
     UPDATE mcp_tools_registry SET updated_at = strftime('%s', 'now') WHERE tool_name = NEW.tool_name;
 END;
+
+-- Provider self-registration
+CREATE TABLE IF NOT EXISTS providers (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    endpoint        TEXT,
+    api_style       TEXT DEFAULT 'openai' CHECK(api_style IN ('openai','anthropic','gemini','custom')),
+    models          TEXT DEFAULT '[]',
+    capabilities    TEXT DEFAULT '[]',
+    is_active       INTEGER DEFAULT 1,
+    registered_by   TEXT,
+    api_key_hash    TEXT,
+    resolution_space INTEGER DEFAULT 0,
+    resolution_criteria TEXT DEFAULT '{}',
+    created_at      DATETIME DEFAULT (datetime('now')),
+    last_seen_at    DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_providers_active ON providers(is_active) WHERE is_active = 1;
+
+-- Dataset profiles: reusable export configurations
+CREATE TABLE IF NOT EXISTS dataset_profiles (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    filters         TEXT DEFAULT '{}',
+    options         TEXT DEFAULT '{}',
+    format          TEXT DEFAULT 'jsonl' CHECK(format IN ('jsonl','csv')),
+    split_ratio     TEXT,
+    created_by      TEXT NOT NULL,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+
+-- Dataset runs: execution history
+CREATE TABLE IF NOT EXISTS dataset_runs (
+    id              TEXT PRIMARY KEY,
+    profile_id      TEXT NOT NULL REFERENCES dataset_profiles(id),
+    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+    row_count       INTEGER,
+    file_size       INTEGER,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    completed_at    DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_dataset_runs_profile ON dataset_runs(profile_id);
+
+-- Preference pairs: DPO-ready training data
+CREATE TABLE IF NOT EXISTS preference_pairs (
+    id              TEXT PRIMARY KEY,
+    question_id     TEXT NOT NULL,
+    chosen_node_id  TEXT NOT NULL,
+    rejected_node_id TEXT NOT NULL,
+    signal_source   TEXT NOT NULL CHECK(signal_source IN ('vote','accept','bounty','challenge')),
+    chosen_model    TEXT,
+    rejected_model  TEXT,
+    margin          REAL,
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pref_pairs_question ON preference_pairs(question_id);
+CREATE INDEX IF NOT EXISTS idx_pref_pairs_models ON preference_pairs(chosen_model, rejected_model);
+
+-- Custom benchmarks
+CREATE TABLE IF NOT EXISTS benchmarks (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    models          TEXT NOT NULL,
+    filter_tags     TEXT DEFAULT '[]',
+    filter_min_score INTEGER DEFAULT 0,
+    flow_name       TEXT NOT NULL,
+    metrics         TEXT DEFAULT '["fidelity","hallucination_count","source_accuracy","latency"]',
+    status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+    results         TEXT,
+    replay_from     TEXT REFERENCES benchmarks(id),
+    created_by      TEXT NOT NULL,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    completed_at    DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_benchmarks_status ON benchmarks(status);
+
+-- Deduplication clusters
+CREATE TABLE IF NOT EXISTS dedup_clusters (
+    id              TEXT PRIMARY KEY,
+    canonical_id    TEXT NOT NULL REFERENCES nodes(id),
+    method          TEXT DEFAULT 'embedding' CHECK(method IN ('exact','fuzzy','embedding')),
+    created_at      DATETIME DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dedup_members (
+    cluster_id      TEXT NOT NULL REFERENCES dedup_clusters(id),
+    node_id         TEXT NOT NULL REFERENCES nodes(id),
+    similarity      REAL NOT NULL,
+    created_at      DATETIME DEFAULT (datetime('now')),
+    PRIMARY KEY (cluster_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dedup_members_node ON dedup_members(node_id);
 `

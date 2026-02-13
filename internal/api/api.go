@@ -16,9 +16,15 @@ import (
 
 type API struct {
 	db              *db.DB
+	flowsDB         *db.FlowsDB
+	metricsDB       *db.MetricsDB
+	flowsDBPath     string
+	metricsDBPath   string
 	auth            *auth.Auth
 	resEngine       *llm.ResolutionEngine
 	challengeRunner *llm.ChallengeRunner
+	replayEngine    *llm.ReplayEngine
+	llmClient       *llm.Client
 	botUserID       string
 	fedConfig       *config.FederationConfig
 	instConfig      *config.InstanceConfig
@@ -27,6 +33,28 @@ type API struct {
 // SetBotUserID sets the bot user ID for auto-answer endpoints.
 func (a *API) SetBotUserID(id string) {
 	a.botUserID = id
+}
+
+// SetFlowsDB sets the flows database for forensic/replay endpoints.
+func (a *API) SetFlowsDB(fdb *db.FlowsDB, path string) {
+	a.flowsDB = fdb
+	a.flowsDBPath = path
+}
+
+// SetMetricsDB sets the metrics database for forensic endpoints.
+func (a *API) SetMetricsDB(mdb *db.MetricsDB, path string) {
+	a.metricsDB = mdb
+	a.metricsDBPath = path
+}
+
+// SetReplayEngine sets the replay engine.
+func (a *API) SetReplayEngine(re *llm.ReplayEngine) {
+	a.replayEngine = re
+}
+
+// SetLLMClient sets the LLM client for dispatch/replay endpoints.
+func (a *API) SetLLMClient(c *llm.Client) {
+	a.llmClient = c
 }
 
 func New(database *db.DB, a *auth.Auth) *API {
@@ -78,8 +106,35 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	// Federation
 	a.RegisterFederationRoutes(mux)
 
+	// Integrity
+	a.RegisterIntegrityRoutes(mux)
+
+	// Replay
+	a.RegisterReplayRoutes(mux)
+
+	// Forensic
+	a.RegisterForensicRoutes(mux)
+
+	// Dispatch (multi-model parallel)
+	a.RegisterDispatchRoutes(mux)
+
+	// Provider self-registration
+	a.RegisterProviderRoutes(mux)
+
+	// Dataset factory
+	a.RegisterDatasetRoutes(mux)
+
+	// Benchmarks
+	a.RegisterBenchmarkRoutes(mux)
+
+	// Deduplication
+	a.RegisterDedupRoutes(mux)
+
 	// Slug lookup
 	mux.HandleFunc("GET /api/q/{slug}", a.handleGetNodeBySlug)
+
+	// API v1 prefix aliases (backward compat)
+	a.RegisterV1Routes(mux)
 }
 
 // --- Auth ---
