@@ -20,7 +20,7 @@ import (
 	horosmcp "github.com/hazyhaar/horostracker/internal/mcp"
 	"github.com/hazyhaar/pkg/audit"
 	"github.com/hazyhaar/pkg/chassis"
-	"github.com/hazyhaar/horostracker/pkg/feedback"
+	"github.com/hazyhaar/pkg/feedback"
 	"github.com/hazyhaar/pkg/mcprt"
 	"github.com/hazyhaar/pkg/trace"
 )

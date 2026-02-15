@@ -5,7 +5,7 @@ go 1.24.7
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/hazyhaar/pkg v0.0.0-20260215153058-9f8e33490f87
+	github.com/hazyhaar/pkg v0.0.0-20260215155643-975e9bdd627b
 	github.com/mark3labs/mcp-go v0.44.0
 	golang.org/x/crypto v0.48.0
 	modernc.org/sqlite v1.45.0
