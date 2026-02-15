@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/hazyhaar/horostracker/internal/api"
 	"github.com/hazyhaar/horostracker/internal/auth"
@@ -17,10 +18,11 @@ import (
 	"github.com/hazyhaar/horostracker/internal/db"
 	"github.com/hazyhaar/horostracker/internal/llm"
 	horosmcp "github.com/hazyhaar/horostracker/internal/mcp"
-	"github.com/hazyhaar/horostracker/pkg/audit"
-	"github.com/hazyhaar/horostracker/pkg/chassis"
-	"github.com/hazyhaar/horostracker/pkg/mcprt"
-	"github.com/hazyhaar/horostracker/pkg/trace"
+	"github.com/hazyhaar/pkg/audit"
+	"github.com/hazyhaar/pkg/chassis"
+	"github.com/hazyhaar/horostracker/pkg/feedback"
+	"github.com/hazyhaar/pkg/mcprt"
+	"github.com/hazyhaar/pkg/trace"
 )
 
 var version = "dev"
@@ -65,6 +67,7 @@ func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.toml")
 	addr := fs.String("addr", "", "listen address (overrides config)")
+	plainHTTP := fs.Bool("http", false, "plain HTTP mode (no TLS, no QUIC) for local dev")
 	fs.Parse(args)
 
 	cfg, err := config.Load(*configPath)
@@ -131,6 +134,8 @@ func cmdServe(args []string) {
 	resEngine := llm.NewResolutionEngine(llmClient, flowsDB, logger)
 	challengeRunner := llm.NewChallengeRunner(flowEngine, database, logger)
 	replayEngine := llm.NewReplayEngine(llmClient, flowsDB, logger)
+	workflowEngine := llm.NewWorkflowEngine(llmClient, flowsDB, logger)
+	modelDiscovery := llm.NewModelDiscovery(flowsDB, llmClient, logger)
 
 	providerCount := len(llmClient.Providers())
 	if providerCount > 0 {
@@ -158,12 +163,20 @@ func cmdServe(args []string) {
 		}
 	}
 
+	// --- Seed core workflows + discover models ---
+	if botUserID != "" {
+		llm.SeedCoreWorkflows(flowsDB, botUserID, logger)
+	}
+	go modelDiscovery.DiscoverAll(ctx)
+
 	// --- HTTP mux (API + static) ---
 	a := auth.New(cfg.Auth.JWTSecret, cfg.Auth.TokenExpiryMin)
 	apiHandler := api.New(database, a)
 	apiHandler.SetResolutionEngine(resEngine)
 	apiHandler.SetChallengeRunner(challengeRunner)
 	apiHandler.SetReplayEngine(replayEngine)
+	apiHandler.SetWorkflowEngine(workflowEngine)
+	apiHandler.SetModelDiscovery(modelDiscovery)
 	apiHandler.SetFlowsDB(flowsDB, cfg.Database.FlowsPath)
 	apiHandler.SetMetricsDB(metricsDB, cfg.Database.MetricsPath)
 	apiHandler.SetLLMClient(llmClient)
@@ -173,54 +186,109 @@ func cmdServe(args []string) {
 	mux := http.NewServeMux()
 	apiHandler.RegisterRoutes(mux)
 
-	staticFS := http.FileServer(http.Dir("static"))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", staticFS))
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/index.html")
-	})
-
-	// --- QUIC chassis ---
-	srv, err := chassis.New(chassis.Config{
-		Addr:      cfg.Server.Addr,
-		CertFile:  cfg.Server.CertFile,
-		KeyFile:   cfg.Server.KeyFile,
-		Handler:   mux,
-		MCPServer: mcpServer,
-		Logger:    logger,
+	// --- Feedback widget ---
+	fbWidget, err := feedback.New(feedback.Config{
+		DB:      sqlDB,
+		AppName: "horostracker",
+		UserIDFn: func(r *http.Request) string {
+			if claims := a.ExtractClaims(r); claims != nil {
+				return claims.UserID
+			}
+			return ""
+		},
 	})
 	if err != nil {
-		logger.Error("creating chassis", "error", err)
-		os.Exit(1)
+		logger.Error("feedback widget", "error", err)
+	} else {
+		fbWidget.RegisterMux(mux, "/feedback")
 	}
+
+	staticFS := http.FileServer(http.Dir("static"))
+	mux.Handle("GET /static/", api.NoCacheStatic(http.StripPrefix("/static/", staticFS)))
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/index.html")
+	})
 
 	// Count nodes for startup display
 	var nodeCount int
 	database.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
 	var flowStepCount int
 	flowsDB.QueryRow("SELECT COUNT(*) FROM flow_steps").Scan(&flowStepCount)
+	workflowCount := flowsDB.CountWorkflows()
 
-	logger.Info("horostracker starting",
-		"version", version,
-		"binary_hash", api.BinaryHash(),
-		"go_version", runtime.Version(),
-		"addr", cfg.Server.Addr,
-		"nodes_db", cfg.Database.Path,
-		"flows_db", cfg.Database.FlowsPath,
-		"metrics_db", cfg.Database.MetricsPath,
-		"node_count", nodeCount,
-		"flow_steps", flowStepCount,
-		"providers", providerCount,
-		"bot", cfg.Bot.Enabled,
-		"federation", cfg.Federation.Enabled,
-		"tcp", "HTTP/1.1+HTTP/2 (TLS)",
-		"udp", "QUIC (HTTP/3 + MCP)",
-	)
-
-	// Start chassis in goroutine
+	handler := api.SecurityHeaders(mux)
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.Start(ctx)
-	}()
+	var shutdownFn func()
+
+	if *plainHTTP {
+		// --- Plain HTTP mode (local dev) ---
+		httpSrv := &http.Server{
+			Addr:    cfg.Server.Addr,
+			Handler: handler,
+		}
+
+		logger.Info("horostracker starting (plain HTTP)",
+			"version", version,
+			"addr", cfg.Server.Addr,
+			"node_count", nodeCount,
+			"flow_steps", flowStepCount,
+			"workflows", workflowCount,
+			"providers", providerCount,
+			"bot", cfg.Bot.Enabled,
+		)
+
+		shutdownFn = func() {
+			sCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer sCancel()
+			httpSrv.Shutdown(sCtx)
+		}
+
+		go func() {
+			errCh <- httpSrv.ListenAndServe()
+		}()
+	} else {
+		// --- QUIC chassis (TLS) ---
+		srv, err := chassis.New(chassis.Config{
+			Addr:      cfg.Server.Addr,
+			CertFile:  cfg.Server.CertFile,
+			KeyFile:   cfg.Server.KeyFile,
+			Handler:   handler,
+			MCPServer: mcpServer,
+			Logger:    logger,
+		})
+		if err != nil {
+			logger.Error("creating chassis", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("horostracker starting",
+			"version", version,
+			"binary_hash", api.BinaryHash(),
+			"go_version", runtime.Version(),
+			"addr", cfg.Server.Addr,
+			"nodes_db", cfg.Database.Path,
+			"flows_db", cfg.Database.FlowsPath,
+			"metrics_db", cfg.Database.MetricsPath,
+			"node_count", nodeCount,
+			"flow_steps", flowStepCount,
+			"workflows", workflowCount,
+			"providers", providerCount,
+			"bot", cfg.Bot.Enabled,
+			"federation", cfg.Federation.Enabled,
+			"tcp", "HTTP/1.1+HTTP/2 (TLS)",
+			"udp", "QUIC (HTTP/3 + MCP)",
+		)
+
+		shutdownFn = func() {
+			sCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer sCancel()
+			srv.Stop(sCtx)
+		}
+
+		go func() {
+			errCh <- srv.Start(ctx)
+		}()
+	}
 
 	// Keep references alive for future middleware wiring
 	_ = traceStore
@@ -235,12 +303,8 @@ func cmdServe(args []string) {
 		}
 	}
 
-	// Graceful shutdown
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5e9) // 5s
-	defer stopCancel()
-	if err := srv.Stop(stopCtx); err != nil {
-		logger.Error("shutdown error", "error", err)
+	if shutdownFn != nil {
+		shutdownFn()
 	}
-
 	logger.Info("horostracker stopped")
 }

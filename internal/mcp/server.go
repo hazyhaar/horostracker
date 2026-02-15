@@ -10,8 +10,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/hazyhaar/horostracker/internal/db"
-	"github.com/hazyhaar/horostracker/pkg/audit"
-	"github.com/hazyhaar/horostracker/pkg/kit"
+	"github.com/hazyhaar/pkg/audit"
+	"github.com/hazyhaar/pkg/kit"
 )
 
 // NewServer creates an MCPServer with all core horostracker tools registered.
