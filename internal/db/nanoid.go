@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY ID generation — thin wrapper around hazyhaar/pkg/idgen for 12-char base-36 identifiers
 package db
 
 import "github.com/hazyhaar/pkg/idgen"

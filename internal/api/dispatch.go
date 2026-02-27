@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Multi-model inference dispatch API — fan-out prompts to multiple LLM models in parallel with optional persistence
 package api
 
 import (

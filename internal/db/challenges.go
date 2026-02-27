@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Challenge and moderation DB operations — CRUD for adversarial challenges, moderation scores, and leaderboard queries
 package db
 
 import (

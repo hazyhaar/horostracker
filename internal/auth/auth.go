@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY JWT authentication — password hashing (bcrypt), token generation/validation, claims extraction from HTTP requests
 package auth
 
 import (

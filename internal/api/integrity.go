@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Integrity API — binary SHA-256 hash, uptime, runtime stats, and health check endpoints
 package api
 
 import (

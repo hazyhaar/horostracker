@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Sentinel errors and ProviderError type for LLM provider failures
 package llm
 
 import (

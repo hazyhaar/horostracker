@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Factory that builds a multi-provider LLM Client from config (activates only providers with API keys)
 package llm
 
 import "github.com/hazyhaar/horostracker/internal/config"

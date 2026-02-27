@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Replay API — re-run individual or bulk LLM flow steps with different models and compare diffs
 package api
 
 import (

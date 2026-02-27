@@ -1,8 +1,9 @@
+// CLAUDE:SUMMARY Envelope routing API — create, claim, deliver, fail, expire envelopes with multi-target delivery tracking
 package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -99,7 +100,7 @@ func (a *API) handleCreateEnvelope(w http.ResponseWriter, r *http.Request) {
 		Targets:        req.Targets,
 	})
 	if err != nil {
-		log.Printf("error creating envelope: %v", err)
+		slog.Error("creating envelope", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -150,7 +151,7 @@ func (a *API) handleListEnvelopes(w http.ResponseWriter, r *http.Request) {
 
 	envelopes, err := a.db.ListEnvelopesByUser(claims.UserID, limit)
 	if err != nil {
-		log.Printf("error listing envelopes: %v", err)
+		slog.Error("listing envelopes", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -177,7 +178,7 @@ func (a *API) handleListBatchEnvelopes(w http.ResponseWriter, r *http.Request) {
 
 	envelopes, err := a.db.ListEnvelopesByBatch(batchID)
 	if err != nil {
-		log.Printf("error listing batch envelopes: %v", err)
+		slog.Error("listing batch envelopes", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -200,7 +201,7 @@ func (a *API) handleDeliverTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.db.DeliverTarget(envID, targetID); err != nil {
-		log.Printf("error delivering target: %v", err)
+		slog.Error("delivering target", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -226,7 +227,7 @@ func (a *API) handleFailTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.db.FailTarget(envID, targetID, req.Error); err != nil {
-		log.Printf("error failing target: %v", err)
+		slog.Error("failing target", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -262,7 +263,7 @@ func (a *API) handleUpdateEnvelopeStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := a.db.UpdateEnvelopeStatus(envID, req.Status, req.Error); err != nil {
-		log.Printf("error updating envelope status: %v", err)
+		slog.Error("updating envelope status", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -326,7 +327,7 @@ func (a *API) handleCreateAnonEnvelope(w http.ResponseWriter, r *http.Request) {
 		Targets:        req.Targets,
 	})
 	if err != nil {
-		log.Printf("error creating anon envelope: %v", err)
+		slog.Error("creating anon envelope", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -398,7 +399,7 @@ func (a *API) handleClaimEnvelope(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleExpireEnvelopes(w http.ResponseWriter, r *http.Request) {
 	count, err := a.db.ExpireEnvelopes()
 	if err != nil {
-		log.Printf("error expiring envelopes: %v", err)
+		slog.Error("expiring envelopes", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}

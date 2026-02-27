@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY TOML configuration loader — server, database, auth, LLM providers, bot, federation, and instance settings
 package config
 
 import (
@@ -100,7 +101,12 @@ func DefaultConfig() *Config {
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
-		return cfg, nil
+		// Auto-discover config.toml in current directory
+		if _, err := os.Stat("config.toml"); err == nil {
+			path = "config.toml"
+		} else {
+			return cfg, nil
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

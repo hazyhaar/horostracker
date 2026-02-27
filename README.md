@@ -2,7 +2,7 @@
 
 Proof-tree search engine. Single binary. Three SQLites. Federation-ready.
 
-horostracker transforms questions into structured argumentation trees where answers, objections, evidence, and corrections build a traceable proof chain. LLM flows stress-test claims through multi-model confrontation, red-teaming, and adversarial detection. The result: **Resolutions** (structured dialogues between argumentative lines) and **corrected garbage sets** (demolished false claims with deception classification) — high-value datasets for LLM training.
+horostracker transforms propositions into structured argumentation trees built from two primitives: **pieces** (factual material — documents, data, citations) and **claims** (propositions — affirmations, objections, syntheses). LLM flows stress-test claims through multi-model confrontation, red-teaming, and adversarial detection. The result: **Resolutions** (structured dialogues between argumentative lines) and **corrected garbage sets** (demolished false claims with deception classification) — high-value datasets for LLM training.
 
 ## Quick start
 
@@ -99,19 +99,14 @@ static/                     Vanilla HTML/JS/CSS SPA
 
 ### Node types
 
-Every piece of content is a **node** in a proof tree. Root nodes are questions; everything else is a child.
+Every content unit is a **node** in a proof tree. The ontology uses two primitives only:
 
 | Type | Description |
 |------|-------------|
-| `question` | Root node — the claim or question to investigate |
-| `answer` | Direct answer to the parent |
-| `evidence` | Supporting evidence with sources |
-| `objection` | Counter-argument or critique |
-| `precision` | Clarification or nuance |
-| `correction` | Factual correction |
-| `synthesis` | Cross-branch summary |
-| `llm` | Bot-generated response |
-| `resolution` | LLM-synthesized structured dialogue |
+| `piece` | Factual material — document, extract, data, testimony, URL, citation. Anchors claims to verifiable sources. |
+| `claim` | Proposition — affirmation, objection, nuance, synthesis. Always linked to a parent piece or claim. |
+
+Bot-generated responses are claims with `model_id` set. Resolutions are claims with `{"is_resolution": true}` in metadata. The rhetorical function (support, attack, nuance) emerges from the score and tree position, not from the type.
 
 ### Temperature
 
@@ -120,7 +115,7 @@ Nodes have a dynamic temperature reflecting controversy level:
 | Temperature | Trigger |
 |-------------|---------|
 | `cold` | Default — low activity |
-| `warm` | 3+ children OR 5+ votes OR any objection |
+| `warm` | 3+ children OR 5+ votes OR any opposing claim (negative score) |
 | `hot` | 5+ children AND 10+ votes, OR completed challenge |
 | `critical` | 10+ children AND 20+ votes, OR 3+ challenges |
 
@@ -144,8 +139,8 @@ Temperature is recalculated automatically on relevant events (new children, vote
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/api/ask` | JWT | Create question (body, tags) |
-| POST | `/api/answer` | JWT | Add child node (parent_id, body, node_type) |
+| POST | `/api/ask` | JWT | Create root claim (body, tags). With LLM: decomposes into thesis/antithesis claims. |
+| POST | `/api/answer` | JWT | Add child node (parent_id, body, node_type: `piece` or `claim`) |
 | GET | `/api/tree/{id}` | - | Get proof tree (optional `?depth=N`) |
 | GET | `/api/node/{id}` | - | Get single node |
 | GET | `/api/q/{slug}` | - | Get node by URL slug |
@@ -322,7 +317,7 @@ Two export formats, both JSONL with per-export anonymization (salt + SHA-256):
 
 **Corrected garbage set** — structured demolition of a false claim:
 - Original claim + credible-sounding formulations
-- Full demolition tree (objections, evidence, corrections)
+- Full demolition tree (opposing claims, pieces, counter-arguments)
 - Deception mechanism classification
 - Resolution (if available)
 - Adversarial challenge count from DB

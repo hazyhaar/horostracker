@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Flow engine — executes multi-step thinking flows (attacker/defender/judge) with template-based prompts
 package llm
 
 import (

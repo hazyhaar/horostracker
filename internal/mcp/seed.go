@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Seeds default SQL-based MCP tools (stats, activity, audit) into the dynamic tool registry
 package mcp
 
 import (

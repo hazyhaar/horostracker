@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY LLM Provider implementation for Anthropic Messages API (Claude models)
 package llm
 
 import (

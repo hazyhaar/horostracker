@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Envelope persistence — models and DB operations for routing envelopes with multi-target delivery tracking
 package db
 
 import (

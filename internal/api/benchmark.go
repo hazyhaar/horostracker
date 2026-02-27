@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Benchmark API endpoints — create, list, get, export, and replay multi-model benchmark runs
 package api
 
 import (

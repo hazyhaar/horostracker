@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Replay engine — re-executes flow steps with different models for cross-model comparison
 package llm
 
 import (

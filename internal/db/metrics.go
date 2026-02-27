@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY MetricsDB — separate SQLite database for Go native metrics (HTTP requests, runtime stats)
 package db
 
 import (

@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Federation API — instance identity, federation status, and per-node content hash for cross-instance verification
 package api
 
 import (

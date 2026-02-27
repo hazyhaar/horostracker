@@ -1,9 +1,10 @@
+// CLAUDE:SUMMARY Adversarial challenge API endpoints — create/run challenges, moderation scores, leaderboard, flow listing
 package api
 
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -64,7 +65,7 @@ func (a *API) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 
 	challenge, err := a.db.CreateChallenge(nodeID, req.FlowName, claims.UserID, req.TargetProvider, req.TargetModel)
 	if err != nil {
-		log.Printf("error creating challenge: %v", err)
+		slog.Error("creating challenge", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -105,9 +106,15 @@ func (a *API) handleRunChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only the challenge creator can run it
+	if challenge.RequestedBy != claims.UserID {
+		jsonError(w, "only the challenge creator can run it", http.StatusForbidden)
+		return
+	}
+
 	result, err := a.challengeRunner.RunChallenge(r.Context(), challenge)
 	if err != nil {
-		log.Printf("error running challenge: %v", err)
+		slog.Error("running challenge", "error", err)
 		jsonError(w, "challenge execution failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

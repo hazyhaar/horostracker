@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Adversarial challenge runner — executes confrontation/red-team/fidelity flows against nodes and scores results
 package llm
 
 import (
@@ -25,7 +26,7 @@ func NewChallengeRunner(flowEngine *FlowEngine, database *db.DB, logger *slog.Lo
 
 // ValidFlows returns the names of available adversarial flows.
 func ValidFlows() []string {
-	return []string{"confrontation", "red_team", "fidelity_benchmark", "adversarial_detection", "deep_dive"}
+	return []string{"confrontation", "red_team", "fidelity_benchmark", "adversarial_detection", "deep_dive", "safety_scoring"}
 }
 
 // IsValidFlow checks if a flow name exists.

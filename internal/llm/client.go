@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Multi-provider LLM client with fallback chain, response logging, and cost tracking
 // Package llm provides a multi-provider LLM client with fallback chain,
 // structured response logging to flows.db, and cost tracking to metrics.db.
 package llm
@@ -105,6 +106,15 @@ func (c *Client) Providers() []string {
 func (c *Client) HasProvider(name string) bool {
 	_, ok := c.providers[name]
 	return ok
+}
+
+// ProviderModels returns a map of provider name → model list for all configured providers.
+func (c *Client) ProviderModels() map[string][]string {
+	result := make(map[string][]string)
+	for name, p := range c.providers {
+		result[name] = p.Models()
+	}
+	return result
 }
 
 func splitModel(model string) (provider, name string) {

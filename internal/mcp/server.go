@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY MCP server setup — registers core horostracker tools (ask, answer, vote, search, bounties) over QUIC
 // Package mcp registers the core horostracker tools on an MCP server.
 // These tools are accessible to any MCP client connecting via QUIC (ALPN horos-mcp-v1).
 package mcp
@@ -6,21 +7,19 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hazyhaar/horostracker/internal/db"
 	"github.com/hazyhaar/pkg/audit"
 	"github.com/hazyhaar/pkg/kit"
 )
 
-// NewServer creates an MCPServer with all core horostracker tools registered.
-func NewServer(database *db.DB, auditLog audit.Logger) *server.MCPServer {
-	srv := server.NewMCPServer(
-		"horostracker",
-		"0.1.0",
-		server.WithToolCapabilities(true),
-	)
+// NewServer creates an MCP Server with all core horostracker tools registered.
+func NewServer(database *db.DB, auditLog audit.Logger) *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{
+		Name:    "horostracker",
+		Version: "0.1.0",
+	}, nil)
 
 	registerAskQuestion(srv, database, auditLog)
 	registerAnswerNode(srv, database, auditLog)
@@ -35,9 +34,18 @@ func NewServer(database *db.DB, auditLog audit.Logger) *server.MCPServer {
 	return srv
 }
 
+// decodeArgs unmarshals req.Params.Arguments (json.RawMessage) into map[string]any.
+func decodeArgs(req *mcp.CallToolRequest) map[string]any {
+	args := make(map[string]any)
+	if req.Params.Arguments != nil {
+		_ = json.Unmarshal(req.Params.Arguments, &args)
+	}
+	return args
+}
+
 // --- ask_question ---
 
-func registerAskQuestion(srv *server.MCPServer, database *db.DB, auditLog audit.Logger) {
+func registerAskQuestion(srv *mcp.Server, database *db.DB, auditLog audit.Logger) {
 	var endpoint kit.Endpoint = func(ctx context.Context, request any) (any, error) {
 		r := request.(*askQuestionReq)
 		node, err := database.CreateNode(db.CreateNodeInput{
@@ -56,19 +64,23 @@ func registerAskQuestion(srv *server.MCPServer, database *db.DB, auditLog audit.
 		endpoint = audit.Middleware(auditLog, "ask_question")(endpoint)
 	}
 
-	schema, _ := json.Marshal(map[string]any{
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"body":      map[string]string{"type": "string", "description": "The question text"},
-			"author_id": map[string]string{"type": "string", "description": "User ID of the asker"},
-			"tags":      map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "Optional tags"},
+		"properties": {
+			"body":      {"type": "string", "description": "The question text"},
+			"author_id": {"type": "string", "description": "User ID of the asker"},
+			"tags":      {"type": "array", "items": {"type": "string"}, "description": "Optional tags"}
 		},
-		"required": []string{"body", "author_id"},
-	})
-	tool := mcp.NewToolWithRawSchema("ask_question", "Post a new question to the proof tree", schema)
+		"required": ["body", "author_id"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "ask_question",
+		Description: "Post a new question to the proof tree",
+		InputSchema: schema,
+	}
 
-	kit.RegisterMCPTool(srv, tool, endpoint, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	kit.RegisterMCPTool(srv, tool, endpoint, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		r := &askQuestionReq{
 			Body:     stringArg(args, "body"),
 			AuthorID: stringArg(args, "author_id"),
@@ -92,7 +104,7 @@ type askQuestionReq struct {
 
 // --- answer_node ---
 
-func registerAnswerNode(srv *server.MCPServer, database *db.DB, auditLog audit.Logger) {
+func registerAnswerNode(srv *mcp.Server, database *db.DB, auditLog audit.Logger) {
 	var endpoint kit.Endpoint = func(ctx context.Context, request any) (any, error) {
 		r := request.(*answerNodeReq)
 		nodeType := r.NodeType
@@ -112,22 +124,26 @@ func registerAnswerNode(srv *server.MCPServer, database *db.DB, auditLog audit.L
 		endpoint = audit.Middleware(auditLog, "answer_node")(endpoint)
 	}
 
-	schema, _ := json.Marshal(map[string]any{
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"parent_id": map[string]string{"type": "string", "description": "Parent node ID"},
-			"body":      map[string]string{"type": "string", "description": "Response text"},
-			"author_id": map[string]string{"type": "string", "description": "User ID"},
-			"node_type": map[string]string{"type": "string", "description": "One of: answer, evidence, objection, precision, correction, synthesis, llm"},
-			"model_id":  map[string]string{"type": "string", "description": "LLM model ID if this is an LLM-generated response"},
-			"tags":      map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
+		"properties": {
+			"parent_id": {"type": "string", "description": "Parent node ID"},
+			"body":      {"type": "string", "description": "Response text"},
+			"author_id": {"type": "string", "description": "User ID"},
+			"node_type": {"type": "string", "description": "One of: answer, evidence, objection, precision, correction, synthesis, llm"},
+			"model_id":  {"type": "string", "description": "LLM model ID if this is an LLM-generated response"},
+			"tags":      {"type": "array", "items": {"type": "string"}}
 		},
-		"required": []string{"parent_id", "body", "author_id"},
-	})
-	tool := mcp.NewToolWithRawSchema("answer_node", "Add a child node (answer, evidence, objection, etc.) to the proof tree", schema)
+		"required": ["parent_id", "body", "author_id"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "answer_node",
+		Description: "Add a child node (answer, evidence, objection, etc.) to the proof tree",
+		InputSchema: schema,
+	}
 
-	kit.RegisterMCPTool(srv, tool, endpoint, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	kit.RegisterMCPTool(srv, tool, endpoint, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		r := &answerNodeReq{
 			ParentID: stringArg(args, "parent_id"),
 			Body:     stringArg(args, "body"),
@@ -159,16 +175,20 @@ type answerNodeReq struct {
 
 // --- get_tree ---
 
-func registerGetTree(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerGetTree(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"node_id":   map[string]string{"type": "string", "description": "Root node ID of the tree"},
-			"max_depth": map[string]any{"type": "integer", "description": "Maximum depth to retrieve", "default": 50},
+		"properties": {
+			"node_id":   {"type": "string", "description": "Root node ID of the tree"},
+			"max_depth": {"type": "integer", "description": "Maximum depth to retrieve", "default": 50}
 		},
-		"required": []string{"node_id"},
-	})
-	tool := mcp.NewToolWithRawSchema("get_tree", "Retrieve the full proof tree from a root node", schema)
+		"required": ["node_id"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "get_tree",
+		Description: "Retrieve the full proof tree from a root node",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		r := request.(*getTreeReq)
@@ -177,8 +197,8 @@ func registerGetTree(srv *server.MCPServer, database *db.DB) {
 			depth = 50
 		}
 		return database.GetTree(r.NodeID, depth)
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &getTreeReq{
 			NodeID:   stringArg(args, "node_id"),
 			MaxDepth: intArg(args, "max_depth", 50),
@@ -193,20 +213,24 @@ type getTreeReq struct {
 
 // --- get_node ---
 
-func registerGetNode(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerGetNode(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"node_id": map[string]string{"type": "string", "description": "Node ID to retrieve"},
+		"properties": {
+			"node_id": {"type": "string", "description": "Node ID to retrieve"}
 		},
-		"required": []string{"node_id"},
-	})
-	tool := mcp.NewToolWithRawSchema("get_node", "Retrieve a single node by ID", schema)
+		"required": ["node_id"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "get_node",
+		Description: "Retrieve a single node by ID",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		return database.GetNode(request.(*getNodeReq).NodeID)
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &getNodeReq{NodeID: stringArg(args, "node_id")}}, nil
 	})
 }
@@ -217,16 +241,20 @@ type getNodeReq struct {
 
 // --- search_nodes ---
 
-func registerSearchNodes(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerSearchNodes(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"query": map[string]string{"type": "string", "description": "FTS5 search query"},
-			"limit": map[string]any{"type": "integer", "description": "Max results", "default": 20},
+		"properties": {
+			"query": {"type": "string", "description": "FTS5 search query"},
+			"limit": {"type": "integer", "description": "Max results", "default": 20}
 		},
-		"required": []string{"query"},
-	})
-	tool := mcp.NewToolWithRawSchema("search_nodes", "Full-text search across all nodes", schema)
+		"required": ["query"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "search_nodes",
+		Description: "Full-text search across all nodes",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		r := request.(*searchReq)
@@ -235,8 +263,8 @@ func registerSearchNodes(srv *server.MCPServer, database *db.DB) {
 			return nil, err
 		}
 		return map[string]any{"results": results, "count": len(results)}, nil
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &searchReq{
 			Query: stringArg(args, "query"),
 			Limit: intArg(args, "limit", 20),
@@ -251,7 +279,7 @@ type searchReq struct {
 
 // --- vote ---
 
-func registerVote(srv *server.MCPServer, database *db.DB, auditLog audit.Logger) {
+func registerVote(srv *mcp.Server, database *db.DB, auditLog audit.Logger) {
 	var endpoint kit.Endpoint = func(ctx context.Context, request any) (any, error) {
 		r := request.(*voteReq)
 		if err := database.Vote(r.UserID, r.NodeID, r.Value); err != nil {
@@ -263,19 +291,23 @@ func registerVote(srv *server.MCPServer, database *db.DB, auditLog audit.Logger)
 		endpoint = audit.Middleware(auditLog, "vote")(endpoint)
 	}
 
-	schema, _ := json.Marshal(map[string]any{
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"user_id": map[string]string{"type": "string", "description": "Voter user ID"},
-			"node_id": map[string]string{"type": "string", "description": "Node to vote on"},
-			"value":   map[string]any{"type": "integer", "description": "1 (upvote) or -1 (downvote)", "enum": []int{-1, 1}},
+		"properties": {
+			"user_id": {"type": "string", "description": "Voter user ID"},
+			"node_id": {"type": "string", "description": "Node to vote on"},
+			"value":   {"type": "integer", "description": "1 (upvote) or -1 (downvote)", "enum": [-1, 1]}
 		},
-		"required": []string{"user_id", "node_id", "value"},
-	})
-	tool := mcp.NewToolWithRawSchema("vote", "Upvote or downvote a node", schema)
+		"required": ["user_id", "node_id", "value"]
+	}`)
+	tool := &mcp.Tool{
+		Name:        "vote",
+		Description: "Upvote or downvote a node",
+		InputSchema: schema,
+	}
 
-	kit.RegisterMCPTool(srv, tool, endpoint, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	kit.RegisterMCPTool(srv, tool, endpoint, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &voteReq{
 			UserID: stringArg(args, "user_id"),
 			NodeID: stringArg(args, "node_id"),
@@ -292,14 +324,18 @@ type voteReq struct {
 
 // --- list_questions ---
 
-func registerListQuestions(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerListQuestions(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"limit": map[string]any{"type": "integer", "description": "Max results", "default": 20},
-		},
-	})
-	tool := mcp.NewToolWithRawSchema("list_questions", "List hot questions ordered by temperature and score", schema)
+		"properties": {
+			"limit": {"type": "integer", "description": "Max results", "default": 20}
+		}
+	}`)
+	tool := &mcp.Tool{
+		Name:        "list_questions",
+		Description: "List hot questions ordered by temperature and score",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		r := request.(*listQuestionsReq)
@@ -308,8 +344,8 @@ func registerListQuestions(srv *server.MCPServer, database *db.DB) {
 			limit = 20
 		}
 		return database.GetHotQuestions(limit)
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &listQuestionsReq{Limit: intArg(args, "limit", 20)}}, nil
 	})
 }
@@ -320,21 +356,25 @@ type listQuestionsReq struct {
 
 // --- list_bounties ---
 
-func registerListBounties(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerListBounties(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"tag":   map[string]string{"type": "string", "description": "Optional tag filter"},
-			"limit": map[string]any{"type": "integer", "description": "Max results", "default": 20},
-		},
-	})
-	tool := mcp.NewToolWithRawSchema("list_bounties", "List active bounties, optionally filtered by tag", schema)
+		"properties": {
+			"tag":   {"type": "string", "description": "Optional tag filter"},
+			"limit": {"type": "integer", "description": "Max results", "default": 20}
+		}
+	}`)
+	tool := &mcp.Tool{
+		Name:        "list_bounties",
+		Description: "List active bounties, optionally filtered by tag",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		r := request.(*listBountiesReq)
 		return database.GetBounties(r.Tag, r.Limit)
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &listBountiesReq{
 			Tag:   stringArg(args, "tag"),
 			Limit: intArg(args, "limit", 20),
@@ -349,14 +389,18 @@ type listBountiesReq struct {
 
 // --- get_tags ---
 
-func registerGetTags(srv *server.MCPServer, database *db.DB) {
-	schema, _ := json.Marshal(map[string]any{
+func registerGetTags(srv *mcp.Server, database *db.DB) {
+	schema := json.RawMessage(`{
 		"type": "object",
-		"properties": map[string]any{
-			"limit": map[string]any{"type": "integer", "description": "Max tags to return", "default": 30},
-		},
-	})
-	tool := mcp.NewToolWithRawSchema("get_tags", "Get popular tags with counts", schema)
+		"properties": {
+			"limit": {"type": "integer", "description": "Max tags to return", "default": 30}
+		}
+	}`)
+	tool := &mcp.Tool{
+		Name:        "get_tags",
+		Description: "Get popular tags with counts",
+		InputSchema: schema,
+	}
 
 	kit.RegisterMCPTool(srv, tool, func(ctx context.Context, request any) (any, error) {
 		r := request.(*getTagsReq)
@@ -365,8 +409,8 @@ func registerGetTags(srv *server.MCPServer, database *db.DB) {
 			limit = 30
 		}
 		return database.GetPopularTags(limit)
-	}, func(req mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
-		args := req.GetArguments()
+	}, func(req *mcp.CallToolRequest) (*kit.MCPDecodeResult, error) {
+		args := decodeArgs(req)
 		return &kit.MCPDecodeResult{Request: &getTagsReq{Limit: intArg(args, "limit", 30)}}, nil
 	})
 }

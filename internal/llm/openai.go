@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Generic OpenAI-compatible Provider (DeepSeek, Groq, Mistral, OpenRouter, Together, etc.)
 package llm
 
 import (

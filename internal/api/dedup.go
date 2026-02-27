@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Deduplication API — check content similarity (hash + fuzzy), list and inspect duplicate clusters
 package api
 
 import (

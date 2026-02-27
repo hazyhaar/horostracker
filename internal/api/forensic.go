@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Forensic API — query LLM call logs, inspect model usage, and download raw flows/metrics SQLite databases
 package api
 
 import (

@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY V1 route aliases — registers /api/v1/ prefix forwarding to existing /api/ handlers for backward compatibility
 package api
 
 import "net/http"

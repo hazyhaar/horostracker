@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Resolution engine — synthesizes proof trees into structured dialogues between argumentative lines
 package llm
 
 import (

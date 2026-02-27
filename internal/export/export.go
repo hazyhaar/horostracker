@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY JSONL dataset export of proof trees with author anonymization and metadata
 // Package export provides JSONL dataset export with anonymization.
 package export
 

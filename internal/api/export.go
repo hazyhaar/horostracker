@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Tree export API — export proof trees, garbage sets, and full database as JSONL files
 package api
 
 import (

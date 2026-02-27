@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Entry point for horostracker server — CLI dispatch (serve, version, help), HTTP server startup with graceful shutdown
 package main
 
 import (

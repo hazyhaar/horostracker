@@ -1,8 +1,9 @@
+// CLAUDE:SUMMARY Dataset profile API — CRUD for export profiles, run dataset generation, export preferences/adversarial/moderation
 package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/hazyhaar/horostracker/internal/db"
@@ -241,7 +242,7 @@ func (a *API) handleExportAdversarial(w http.ResponseWriter, r *http.Request) {
 		c.created_at, COALESCE(c.completed_at,'')
 		FROM challenges c WHERE c.status = 'completed' ORDER BY c.created_at DESC LIMIT 500`)
 	if err != nil {
-		log.Printf("export adversarial error: %v", err)
+		slog.Error("export adversarial failed", "error", err)
 		jsonError(w, "query failed", http.StatusInternalServerError)
 		return
 	}

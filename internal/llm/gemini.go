@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY LLM Provider implementation for Google Gemini API (Flash, Pro models)
 package llm
 
 import (

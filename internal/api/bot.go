@@ -1,8 +1,9 @@
+// CLAUDE:SUMMARY Bot API endpoints — trigger LLM-generated answers for nodes and check bot status
 package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/hazyhaar/horostracker/internal/db"
@@ -66,7 +67,7 @@ func (a *API) handleBotAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := a.challengeRunner.RunChallenge(r.Context(), challenge)
 		if err != nil {
-			log.Printf("bot challenge error: %v", err)
+			slog.Error("bot challenge failed", "error", err)
 			jsonError(w, "challenge failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -80,16 +81,16 @@ func (a *API) handleBotAnswer(w http.ResponseWriter, r *http.Request) {
 	// Default: generate a synthesis answer
 	result, err := a.resEngine.GenerateResolution(r.Context(), tree, req.Provider, req.Model)
 	if err != nil {
-		log.Printf("bot answer error: %v", err)
+		slog.Error("bot answer failed", "error", err)
 		jsonError(w, "generation failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Store as an LLM node
+	// Store as a claim node with bot/model metadata
 	modelID := result.Model
 	node, err := a.db.CreateNode(db.CreateNodeInput{
 		ParentID: &nodeID,
-		NodeType: "llm",
+		NodeType: "claim",
 		Body:     result.Content,
 		AuthorID: a.botUserID,
 		ModelID:  &modelID,
@@ -102,13 +103,13 @@ func (a *API) handleBotAnswer(w http.ResponseWriter, r *http.Request) {
 		}),
 	})
 	if err != nil {
-		log.Printf("bot node creation error: %v", err)
+		slog.Error("bot node creation failed", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	jsonResp(w, http.StatusCreated, map[string]interface{}{
-		"type":       "answer",
+		"type":       "claim",
 		"node":       node,
 		"generation": result,
 	})

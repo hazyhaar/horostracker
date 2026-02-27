@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY SQLite schema DDL — nodes table with FTS5, users, votes, tags, bounties, providers, challenges, envelopes, safety patterns
 package db
 
 const schema = `
@@ -6,7 +7,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     parent_id       TEXT REFERENCES nodes(id),
     root_id         TEXT NOT NULL,
     slug            TEXT UNIQUE,
-    node_type       TEXT NOT NULL CHECK(node_type IN ('question','answer','evidence','objection','precision','correction','synthesis','llm','resolution')),
+    node_type       TEXT NOT NULL CHECK(node_type IN ('piece','claim')),
     body            TEXT NOT NULL,
     author_id       TEXT NOT NULL,
     model_id        TEXT,
@@ -23,10 +24,14 @@ CREATE TABLE IF NOT EXISTS nodes (
     signature       TEXT DEFAULT '',
     binary_hash     TEXT DEFAULT '',
     created_at      DATETIME DEFAULT (datetime('now')),
-    updated_at      DATETIME DEFAULT (datetime('now'))
+    updated_at      DATETIME DEFAULT (datetime('now')),
+    deleted_at      DATETIME,
+    decomposed_from TEXT REFERENCES nodes(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_deleted ON nodes(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_nodes_decomposed_from ON nodes(decomposed_from);
 CREATE INDEX IF NOT EXISTS idx_nodes_root ON nodes(root_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
 CREATE INDEX IF NOT EXISTS idx_nodes_author ON nodes(author_id);
@@ -51,7 +56,7 @@ CREATE TABLE IF NOT EXISTS users (
     handle                  TEXT UNIQUE NOT NULL,
     email                   TEXT UNIQUE,
     password_hash           TEXT NOT NULL,
-    role                    TEXT DEFAULT 'user' CHECK(role IN ('user','moderator','admin')),
+    role                    TEXT DEFAULT 'user' CHECK(role IN ('anon','user','researcher','provider','operator')),
     is_bot                  INTEGER DEFAULT 0 CHECK(is_bot IN (0, 1)),
     reputation              INTEGER DEFAULT 0,
     honor_rate              REAL DEFAULT 1.0,
@@ -113,20 +118,34 @@ CREATE TABLE IF NOT EXISTS bounty_contributions (
 );
 CREATE INDEX IF NOT EXISTS idx_bounty_contrib_bounty ON bounty_contributions(bounty_id);
 
--- Sources: URLs/documents attached to evidence nodes
+-- Sources: URLs/documents attached to piece/claim nodes
 CREATE TABLE IF NOT EXISTS sources (
-    id          TEXT PRIMARY KEY,
-    node_id     TEXT NOT NULL,
-    url         TEXT NOT NULL,
-    title       TEXT,
-    domain      TEXT,
+    id           TEXT PRIMARY KEY,
+    node_id      TEXT NOT NULL,
+    url          TEXT,
+    content_text TEXT,
+    title        TEXT,
+    domain       TEXT,
     content_hash TEXT,
-    trust_score REAL DEFAULT 0.5,
-    verified_at DATETIME,
-    created_at  DATETIME DEFAULT (datetime('now'))
+    trust_score  REAL DEFAULT 0.5,
+    verified_at  DATETIME,
+    created_at   DATETIME DEFAULT (datetime('now')),
+    CHECK(url IS NOT NULL OR content_text IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_sources_node ON sources(node_id);
 CREATE INDEX IF NOT EXISTS idx_sources_domain ON sources(domain);
+
+-- 5W1H dimensional indexation of sources
+CREATE TABLE IF NOT EXISTS source_5w1h (
+    id          TEXT PRIMARY KEY,
+    source_id   TEXT NOT NULL REFERENCES sources(id),
+    dimension   TEXT NOT NULL CHECK(dimension IN ('who','what','when','where','why','how')),
+    content     TEXT NOT NULL,
+    confidence  REAL DEFAULT 0.5,
+    created_at  DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_source_5w1h_source ON source_5w1h(source_id);
+CREATE INDEX IF NOT EXISTS idx_source_5w1h_dim ON source_5w1h(dimension);
 
 -- Credit ledger: bot economy transactions
 CREATE TABLE IF NOT EXISTS credit_ledger (
@@ -403,4 +422,66 @@ CREATE TABLE IF NOT EXISTS dedup_members (
     PRIMARY KEY (cluster_id, node_id)
 );
 CREATE INDEX IF NOT EXISTS idx_dedup_members_node ON dedup_members(node_id);
+
+-- Visibility strata: maps visibility levels to minimum roles
+CREATE TABLE IF NOT EXISTS visibility_strata (
+    id       TEXT PRIMARY KEY,
+    min_role TEXT NOT NULL,
+    ordinal  INTEGER NOT NULL DEFAULT 0
+);
+
+-- Node clones: tracks systematic clones for provider access
+CREATE TABLE IF NOT EXISTS node_clones (
+    source_id TEXT NOT NULL,
+    clone_id  TEXT NOT NULL,
+    created_at DATETIME DEFAULT (datetime('now')),
+    PRIMARY KEY (source_id, clone_id)
+);
+CREATE INDEX IF NOT EXISTS idx_node_clones_clone ON node_clones(clone_id);
+
+-- Safety scores: multi-scorer assessment timeline
+CREATE TABLE IF NOT EXISTS safety_scores (
+    id         TEXT PRIMARY KEY,
+    node_id    TEXT NOT NULL,
+    scorer_id  TEXT NOT NULL,
+    score      REAL NOT NULL,
+    severity   TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('info','low','medium','high','critical')),
+    flags      TEXT DEFAULT '[]',
+    created_at DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_safety_scores_node ON safety_scores(node_id);
+CREATE INDEX IF NOT EXISTS idx_safety_scores_scorer ON safety_scores(scorer_id);
+
+-- Safety patterns: community-maintained blocklist/flaglist
+CREATE TABLE IF NOT EXISTS safety_patterns (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern      TEXT NOT NULL,
+    pattern_type TEXT NOT NULL DEFAULT 'exact' CHECK(pattern_type IN ('exact','substring','regex')),
+    list_type    TEXT NOT NULL DEFAULT 'flag' CHECK(list_type IN ('block','flag')),
+    severity     TEXT NOT NULL DEFAULT 'low' CHECK(severity IN ('info','low','medium','high','critical')),
+    language     TEXT DEFAULT 'en',
+    category     TEXT DEFAULT '',
+    description  TEXT DEFAULT '',
+    votes_up     INTEGER DEFAULT 0,
+    votes_down   INTEGER DEFAULT 0,
+    created_by   TEXT,
+    created_at   DATETIME DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_safety_patterns_type ON safety_patterns(list_type);
+
+-- Resolutions: tracks generated resolutions per node/provider/model triplet
+CREATE TABLE IF NOT EXISTS resolutions (
+    id              TEXT PRIMARY KEY,
+    node_id         TEXT NOT NULL,
+    provider        TEXT NOT NULL DEFAULT '',
+    model           TEXT NOT NULL DEFAULT '',
+    content         TEXT,
+    tokens_in       INTEGER DEFAULT 0,
+    tokens_out      INTEGER DEFAULT 0,
+    latency_ms      INTEGER DEFAULT 0,
+    status          TEXT DEFAULT 'completed',
+    created_at      DATETIME DEFAULT (datetime('now')),
+    updated_at      DATETIME DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resolutions_triplet ON resolutions(node_id, provider, model);
 `

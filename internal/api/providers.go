@@ -1,3 +1,4 @@
+// CLAUDE:SUMMARY Provider registry API — register, list, get, and heartbeat external LLM/resolution providers
 package api
 
 import (
@@ -64,38 +65,35 @@ func (a *API) handleProviderRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleProviderList(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(`SELECT id, name, endpoint, api_style, models, is_active, COALESCE(last_seen_at,''), created_at
-		FROM providers ORDER BY created_at DESC`)
-	if err != nil {
-		jsonError(w, "query failed", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+	result := make(map[string][]string)
 
-	type providerInfo struct {
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		Endpoint   string `json:"endpoint"`
-		APIStyle   string `json:"api_style"`
-		Models     string `json:"models"`
-		IsActive   bool   `json:"is_active"`
-		LastSeenAt string `json:"last_seen_at,omitempty"`
-		CreatedAt  string `json:"created_at"`
+	// From providers table (self-registered)
+	rows, err := a.db.Query(`SELECT name, models FROM providers WHERE is_active = 1 ORDER BY created_at DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name, modelsJSON string
+			if rows.Scan(&name, &modelsJSON) == nil {
+				var models []string
+				json.Unmarshal([]byte(modelsJSON), &models)
+				if len(models) > 0 {
+					result[name] = models
+				}
+			}
+		}
 	}
 
-	var providers []providerInfo
-	for rows.Next() {
-		var p providerInfo
-		var active int
-		if rows.Scan(&p.ID, &p.Name, &p.Endpoint, &p.APIStyle, &p.Models, &active, &p.LastSeenAt, &p.CreatedAt) == nil {
-			p.IsActive = active == 1
-			providers = append(providers, p)
+	// From LLM client configuration
+	if a.llmClient != nil {
+		for provName, models := range a.llmClient.ProviderModels() {
+			if _, exists := result[provName]; !exists && len(models) > 0 {
+				result[provName] = models
+			}
 		}
 	}
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"providers": providers,
-		"count":     len(providers),
+		"providers": result,
 	})
 }
 

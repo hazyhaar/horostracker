@@ -1,18 +1,27 @@
+// CLAUDE:SUMMARY Resolution API — generate LLM resolutions for proof trees, batch resolution, render, and model listing
 package api
 
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/hazyhaar/horostracker/internal/db"
 	"github.com/hazyhaar/horostracker/internal/llm"
 )
 
+// BatchResolutionRateLimiter is the rate limiter for POST /api/resolution/batch (10 req/3600s).
+var BatchResolutionRateLimiter = NewRateLimiter(10, 3600*time.Second)
+
 // RegisterResolutionRoutes adds Resolution-related API endpoints.
 func (a *API) RegisterResolutionRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/resolution/batch", RateLimitMiddleware(BatchResolutionRateLimiter, a.handleBatchResolution))
 	mux.HandleFunc("POST /api/resolution/{id}", a.handleGenerateResolution)
+	mux.HandleFunc("GET /api/resolution/{id}/unresolved", a.handleGetUnresolved)
+	mux.HandleFunc("GET /api/resolution/{id}/models", a.handleGetResolutionModels)
 	mux.HandleFunc("GET /api/resolution/{id}", a.handleGetResolution)
 	mux.HandleFunc("POST /api/render/{id}", a.handleRenderResolution)
 	mux.HandleFunc("GET /api/renders/{id}", a.handleGetRenders)
@@ -59,7 +68,7 @@ func (a *API) handleGenerateResolution(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "node not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("error getting tree: %v", err)
+		slog.Error("getting tree", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -67,30 +76,38 @@ func (a *API) handleGenerateResolution(w http.ResponseWriter, r *http.Request) {
 	// Generate resolution
 	result, err := a.resEngine.GenerateResolution(r.Context(), tree, req.Provider, req.Model)
 	if err != nil {
-		log.Printf("error generating resolution: %v", err)
+		slog.Error("generating resolution", "error", err)
 		jsonError(w, "resolution generation failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Store as a resolution node attached to the tree root
+	// Store as a claim node with is_resolution metadata
 	resNode, err := a.db.CreateNode(db.CreateNodeInput{
 		ParentID: &nodeID,
-		NodeType: "resolution",
+		NodeType: "claim",
 		Body:     result.Content,
 		AuthorID: claims.UserID,
 		ModelID:  &result.Model,
 		Metadata: mustJSON(map[string]interface{}{
-			"provider":  result.Provider,
-			"tokens_in": result.TokensIn,
-			"tokens_out": result.TokensOut,
-			"latency_ms": result.LatencyMs,
+			"is_resolution": true,
+			"provider":      result.Provider,
+			"tokens_in":     result.TokensIn,
+			"tokens_out":    result.TokensOut,
+			"latency_ms":    result.LatencyMs,
 		}),
 	})
 	if err != nil {
-		log.Printf("error storing resolution: %v", err)
+		slog.Error("storing resolution", "error", err)
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// Upsert into resolutions table for tracking per provider/model
+	a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(node_id, provider, model)
+		DO UPDATE SET content=excluded.content, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, latency_ms=excluded.latency_ms, updated_at=datetime('now')`,
+		db.NewID(), nodeID, result.Provider, result.Model, result.Content, result.TokensIn, result.TokensOut, result.LatencyMs)
 
 	jsonResp(w, http.StatusCreated, map[string]interface{}{
 		"resolution": resNode,
@@ -114,7 +131,7 @@ func (a *API) handleGetResolution(w http.ResponseWriter, r *http.Request) {
 
 	var resolutions []*db.Node
 	for _, n := range nodes {
-		if n.NodeType == "resolution" {
+		if strings.Contains(n.Metadata, `"is_resolution"`) {
 			resolutions = append(resolutions, n)
 		}
 	}
@@ -170,7 +187,7 @@ func (a *API) handleRenderResolution(w http.ResponseWriter, r *http.Request) {
 	// Render
 	result, err := a.resEngine.RenderResolution(r.Context(), resNode.Body, req.Format, req.Provider, req.Model)
 	if err != nil {
-		log.Printf("error rendering resolution: %v", err)
+		slog.Error("rendering resolution", "error", err)
 		jsonError(w, "render failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -235,6 +252,198 @@ func (a *API) handleGetRenders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResp(w, http.StatusOK, renders)
+}
+
+func (a *API) handleGetResolutionModels(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
+	if nodeID == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := a.db.Query(`
+		SELECT provider, model, COUNT(*) as cnt
+		FROM resolutions
+		WHERE node_id = ?
+		GROUP BY provider, model
+		ORDER BY provider, model`, nodeID)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	models := make(map[string]interface{})
+	for rows.Next() {
+		var provider, model string
+		var cnt int
+		if err := rows.Scan(&provider, &model, &cnt); err != nil {
+			continue
+		}
+		key := provider
+		if model != "" {
+			key += "/" + model
+		}
+		if key == "" {
+			key = "default"
+		}
+		models[key] = cnt
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"count":  len(models),
+		"models": models,
+	})
+}
+
+func (a *API) handleGetUnresolved(w http.ResponseWriter, r *http.Request) {
+	claims := a.auth.ExtractClaims(r)
+	if claims == nil {
+		jsonError(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := r.PathValue("id")
+	if nodeID == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	provider := r.URL.Query().Get("provider")
+	model := r.URL.Query().Get("model")
+	if provider == "" || model == "" {
+		jsonError(w, "provider and model query parameters are required", http.StatusBadRequest)
+		return
+	}
+
+	// Get all child nodes of this tree
+	allNodes, err := a.db.GetNodesByRoot(nodeID)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter: nodes that don't have a resolution for this provider/model
+	var unresolved []*db.Node
+	for _, n := range allNodes {
+		if strings.Contains(n.Metadata, `"is_resolution"`) {
+			continue
+		}
+		var count int
+		a.db.QueryRow("SELECT COUNT(*) FROM resolutions WHERE node_id = ? AND provider = ? AND model = ?",
+			n.ID, provider, model).Scan(&count)
+		if count == 0 {
+			unresolved = append(unresolved, n)
+		}
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"nodes": unresolved,
+		"count": len(unresolved),
+	})
+}
+
+func (a *API) handleBatchResolution(w http.ResponseWriter, r *http.Request) {
+	claims := a.auth.ExtractClaims(r)
+	if claims == nil {
+		jsonError(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB max for batch payload
+
+	var req struct {
+		NodeIDs  []string `json:"node_ids"`
+		Provider string   `json:"provider"`
+		Model    string   `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if strings.Contains(err.Error(), "too large") || strings.Contains(err.Error(), "http: request body too large") {
+			jsonError(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.NodeIDs) == 0 {
+		jsonError(w, "node_ids is required and must not be empty", http.StatusBadRequest)
+		return
+	}
+	if len(req.NodeIDs) > 50 {
+		jsonError(w, "maximum 50 nodes per batch", http.StatusBadRequest)
+		return
+	}
+
+	if a.resEngine == nil {
+		jsonError(w, "no LLM providers configured — resolution generation unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	var succeeded, failed int
+	var results []map[string]interface{}
+
+	for _, nodeID := range req.NodeIDs {
+		tree, err := a.db.GetTree(nodeID, 100)
+		if err != nil {
+			failed++
+			results = append(results, map[string]interface{}{
+				"node_id": nodeID,
+				"status":  "failed",
+				"error":   "node not found",
+			})
+			continue
+		}
+
+		result, err := a.resEngine.GenerateResolution(r.Context(), tree, req.Provider, req.Model)
+		if err != nil {
+			failed++
+			results = append(results, map[string]interface{}{
+				"node_id": nodeID,
+				"status":  "failed",
+				"error":   err.Error(),
+			})
+			continue
+		}
+
+		// Store resolution as claim node with is_resolution metadata
+		_, storeErr := a.db.CreateNode(db.CreateNodeInput{
+			ParentID: &nodeID,
+			NodeType: "claim",
+			Body:     result.Content,
+			AuthorID: claims.UserID,
+			ModelID:  &result.Model,
+			Metadata: mustJSON(map[string]interface{}{
+				"is_resolution": true,
+				"provider":      result.Provider,
+				"tokens_in":     result.TokensIn,
+				"tokens_out":    result.TokensOut,
+				"latency_ms":    result.LatencyMs,
+			}),
+		})
+		if storeErr != nil {
+			slog.Error("storing batch resolution", "error", storeErr)
+		}
+
+		// Upsert into resolutions table
+		a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(node_id, provider, model)
+			DO UPDATE SET content=excluded.content, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, latency_ms=excluded.latency_ms, updated_at=datetime('now')`,
+			db.NewID(), nodeID, result.Provider, result.Model, result.Content, result.TokensIn, result.TokensOut, result.LatencyMs)
+
+		succeeded++
+		results = append(results, map[string]interface{}{
+			"node_id": nodeID,
+			"status":  "completed",
+		})
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"total":     len(req.NodeIDs),
+		"succeeded": succeeded,
+		"failed":    failed,
+		"results":   results,
+	})
 }
 
 func mustJSON(v interface{}) string {

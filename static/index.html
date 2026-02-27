@@ -10,8 +10,8 @@
   <header class="header">
     <a class="header-logo" href="#/">horostracker</a>
     <nav class="header-actions" id="header-actions">
-      <button class="btn btn-sm" onclick="location.hash='#/login'">Login</button>
-      <button class="btn btn-sm btn-primary" onclick="location.hash='#/register'">Register</button>
+      <button class="btn btn-sm" data-nav="#/login">Login</button>
+      <button class="btn btn-sm btn-primary" data-nav="#/register">Register</button>
     </nav>
   </header>
   <main class="container" id="app">
@@ -20,5 +20,6 @@
     </div>
   </main>
   <script src="/static/js/app.js"></script>
+  <script src="/feedback/widget.js" data-base="/feedback" data-token-key="ht_token"></script>
 </body>
 </html>
