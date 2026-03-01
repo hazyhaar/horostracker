@@ -83,7 +83,7 @@ func (db *DB) safeAlter() error {
 		{"instance", "operator", 3},
 	}
 	for _, s := range strata {
-		db.Exec("INSERT OR IGNORE INTO visibility_strata (id, min_role, ordinal) VALUES (?, ?, ?)",
+		_, _ = db.Exec("INSERT OR IGNORE INTO visibility_strata (id, min_role, ordinal) VALUES (?, ?, ?)",
 			s.id, s.role, s.ord)
 	}
 
@@ -101,21 +101,21 @@ func isDuplicateColumn(err error) bool {
 // CHECK constraint does not already contain 'piece'.
 func (db *DB) migrateNodeTypeConstraint() {
 	var ddl string
-	db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='nodes'").Scan(&ddl)
+	_ = db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='nodes'").Scan(&ddl)
 	if ddl == "" || strings.Contains(ddl, "'piece'") {
 		return // already migrated or fresh DB
 	}
 	slog.Info("migrating nodes table: converting legacy types to piece/claim ontology")
 	// Disable FK checks before transaction — SQLite requires this outside tx
-	db.Exec("PRAGMA foreign_keys = OFF")
-	defer db.Exec("PRAGMA foreign_keys = ON")
+	_, _ = db.Exec("PRAGMA foreign_keys = OFF")
+	defer func() { _, _ = db.Exec("PRAGMA foreign_keys = ON") }()
 
 	tx, err := db.Begin()
 	if err != nil {
 		slog.Error("migration failed", "phase", "begin", "error", err)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Rebuild table with new CHECK constraint and remap types in one step.
 	// The old CHECK constraint prevents in-place UPDATE, so we remap via
@@ -176,20 +176,20 @@ func (db *DB) migrateNodeTypeConstraint() {
 // question_id column. Idempotent: only runs when question_id exists.
 func (db *DB) migrateNodeClones() {
 	var ddl string
-	db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='node_clones'").Scan(&ddl)
+	_ = db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='node_clones'").Scan(&ddl)
 	if ddl == "" || !strings.Contains(ddl, "question_id") {
 		return // already migrated or fresh DB
 	}
 	slog.Info("migrating node_clones table: dropping legacy question_id column")
-	db.Exec("PRAGMA foreign_keys = OFF")
-	defer db.Exec("PRAGMA foreign_keys = ON")
+	_, _ = db.Exec("PRAGMA foreign_keys = OFF")
+	defer func() { _, _ = db.Exec("PRAGMA foreign_keys = ON") }()
 
 	tx, err := db.Begin()
 	if err != nil {
 		slog.Error("node_clones migration failed", "phase", "begin", "error", err)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	steps := []string{
 		`ALTER TABLE node_clones RENAME TO _node_clones_old`,

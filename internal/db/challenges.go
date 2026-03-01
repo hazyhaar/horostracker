@@ -194,11 +194,11 @@ func (db *DB) RecalculateTemperature(nodeID string) (string, error) {
 
 	// Count total votes (abs values)
 	var voteCount int
-	db.QueryRow(`SELECT COUNT(*) FROM votes WHERE node_id = ?`, nodeID).Scan(&voteCount)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM votes WHERE node_id = ?`, nodeID).Scan(&voteCount)
 
 	// Count objections
 	var objectionCount int
-	db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND node_type = 'objection'`, nodeID).Scan(&objectionCount)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND node_type = 'objection'`, nodeID).Scan(&objectionCount)
 
 	// Count completed challenges
 	challengeCount, _ := db.CountChallengesForNode(nodeID)

@@ -43,7 +43,7 @@ func (a *API) handleBotAnswer(w http.ResponseWriter, r *http.Request) {
 		Model    string `json:"model"`
 		FlowName string `json:"flow_name"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	// Get tree for context
 	tree, err := a.db.GetTree(nodeID, 50)
@@ -53,22 +53,22 @@ func (a *API) handleBotAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debit bot credits (1 credit per answer)
-	if err := a.db.DebitCredits(a.botUserID, 1, "bot_answer", "node", nodeID); err != nil {
+	if debitErr := a.db.DebitCredits(a.botUserID, 1, "bot_answer", "node", nodeID); debitErr != nil {
 		jsonError(w, "bot credit limit reached", http.StatusTooManyRequests)
 		return
 	}
 
 	// If a specific flow is requested, run it via challenge runner
 	if req.FlowName != "" && a.challengeRunner != nil {
-		challenge, err := a.db.CreateChallenge(nodeID, req.FlowName, a.botUserID, &req.Provider, &req.Model)
-		if err != nil {
+		challenge, challengeErr := a.db.CreateChallenge(nodeID, req.FlowName, a.botUserID, &req.Provider, &req.Model)
+		if challengeErr != nil {
 			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		result, err := a.challengeRunner.RunChallenge(r.Context(), challenge)
-		if err != nil {
-			slog.Error("bot challenge failed", "error", err)
-			jsonError(w, "challenge failed: "+err.Error(), http.StatusInternalServerError)
+		result, challengeErr := a.challengeRunner.RunChallenge(r.Context(), challenge)
+		if challengeErr != nil {
+			slog.Error("bot challenge failed", "error", challengeErr)
+			jsonError(w, "challenge failed: "+challengeErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		jsonResp(w, http.StatusCreated, map[string]interface{}{

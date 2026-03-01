@@ -305,7 +305,7 @@ func (db *FlowsDB) ReorderSteps(workflowID string, stepIDs []string) error {
 	for i, sid := range stepIDs {
 		if _, err := tx.Exec(`UPDATE workflow_steps SET step_order = ? WHERE step_id = ? AND workflow_id = ?`,
 			i+1, sid, workflowID); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 	}
@@ -610,7 +610,7 @@ func (db *FlowsDB) GetAuditLog(runID string) ([]map[string]interface{}, error) {
 // CountWorkflows returns the total number of workflows.
 func (db *FlowsDB) CountWorkflows() int {
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM workflows`).Scan(&count)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM workflows`).Scan(&count)
 	return count
 }
 
@@ -638,9 +638,9 @@ func nilIfEmpty(s string) interface{} {
 // ValidateStepTypesForRole checks that all steps use allowed types.
 func ValidateStepTypesForRole(steps []WorkflowStep, role string) error {
 	allowed := AllowedStepTypes(role)
-	for _, s := range steps {
-		if !allowed[s.StepType] {
-			return fmt.Errorf("role %q cannot create steps of type %q", role, s.StepType)
+	for i := range steps {
+		if !allowed[steps[i].StepType] {
+			return fmt.Errorf("role %q cannot create steps of type %q", role, steps[i].StepType)
 		}
 	}
 	return nil

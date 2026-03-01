@@ -56,8 +56,8 @@ func (a *API) handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Count nodes by origin
 	var localCount, remoteCount int
-	a.db.QueryRow("SELECT COUNT(*) FROM nodes WHERE origin_instance = 'local'").Scan(&localCount)
-	a.db.QueryRow("SELECT COUNT(*) FROM nodes WHERE origin_instance != 'local'").Scan(&remoteCount)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM nodes WHERE origin_instance = 'local'").Scan(&localCount)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM nodes WHERE origin_instance != 'local'").Scan(&remoteCount)
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"federation_enabled": enabled,
@@ -92,7 +92,7 @@ func (a *API) handleNodeHash(w http.ResponseWriter, r *http.Request) {
 
 	// Store if not already set
 	if node.BinaryHash == "" {
-		a.db.Exec("UPDATE nodes SET binary_hash = ? WHERE id = ? AND binary_hash = ''", hash, id)
+		_, _ = a.db.Exec("UPDATE nodes SET binary_hash = ? WHERE id = ? AND binary_hash = ''", hash, id)
 	}
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{

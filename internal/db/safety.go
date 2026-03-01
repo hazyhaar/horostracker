@@ -39,7 +39,7 @@ func (db *DB) ScoreContent(content string) *SafetyResult {
 			matched := false
 			switch patternType {
 			case "exact":
-				matched = strings.ToLower(pattern) == lower
+				matched = strings.EqualFold(pattern, lower)
 			case "substring":
 				matched = strings.Contains(lower, strings.ToLower(pattern))
 			case "regex":

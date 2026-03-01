@@ -47,13 +47,13 @@ func (db *FlowsDB) migrate() error {
 		return err
 	}
 	// Safe column additions (ignore errors if columns already exist)
-	db.Exec(`ALTER TABLE flow_steps ADD COLUMN replay_of_id TEXT REFERENCES flow_steps(id)`)
-	db.Exec(`ALTER TABLE flow_steps ADD COLUMN dispatch_id TEXT`)
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_replay ON flow_steps(replay_of_id) WHERE replay_of_id IS NOT NULL`)
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_dispatch ON flow_steps(dispatch_id) WHERE dispatch_id IS NOT NULL`)
+	_, _ = db.Exec(`ALTER TABLE flow_steps ADD COLUMN replay_of_id TEXT REFERENCES flow_steps(id)`)
+	_, _ = db.Exec(`ALTER TABLE flow_steps ADD COLUMN dispatch_id TEXT`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_replay ON flow_steps(replay_of_id) WHERE replay_of_id IS NOT NULL`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_flow_steps_dispatch ON flow_steps(dispatch_id) WHERE dispatch_id IS NOT NULL`)
 
 	// v2: owner_id on available_models (NULL = auto-discovered, non-NULL = provider-registered)
-	db.Exec(`ALTER TABLE available_models ADD COLUMN owner_id TEXT`)
+	_, _ = db.Exec(`ALTER TABLE available_models ADD COLUMN owner_id TEXT`)
 	return nil
 }
 

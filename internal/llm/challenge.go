@@ -53,14 +53,14 @@ func (cr *ChallengeRunner) RunChallenge(ctx context.Context, challenge *db.Chall
 	// Resolve flow config
 	flow, err := cr.resolveFlow(challenge.FlowName)
 	if err != nil {
-		cr.database.UpdateChallengeFailed(challenge.ID, err.Error())
+		_ = cr.database.UpdateChallengeFailed(challenge.ID, err.Error())
 		return nil, err
 	}
 
 	// Get the node
 	node, err := cr.database.GetNode(challenge.NodeID)
 	if err != nil {
-		cr.database.UpdateChallengeFailed(challenge.ID, "node not found: "+err.Error())
+		_ = cr.database.UpdateChallengeFailed(challenge.ID, "node not found: "+err.Error())
 		return nil, fmt.Errorf("getting node: %w", err)
 	}
 
@@ -85,7 +85,7 @@ func (cr *ChallengeRunner) RunChallenge(ctx context.Context, challenge *db.Chall
 
 	// Mark as running
 	flowID := db.NewID()
-	cr.database.UpdateChallengeRunning(challenge.ID, flowID)
+	_ = cr.database.UpdateChallengeRunning(challenge.ID, flowID)
 
 	cr.logger.Info("running challenge",
 		"challenge_id", challenge.ID,
@@ -105,7 +105,7 @@ func (cr *ChallengeRunner) RunChallenge(ctx context.Context, challenge *db.Chall
 
 	flowResult, err := cr.flowEngine.Execute(ctx, flow, fctx)
 	if err != nil {
-		cr.database.UpdateChallengeFailed(challenge.ID, err.Error())
+		_ = cr.database.UpdateChallengeFailed(challenge.ID, err.Error())
 		return nil, fmt.Errorf("executing flow: %w", err)
 	}
 
@@ -113,16 +113,16 @@ func (cr *ChallengeRunner) RunChallenge(ctx context.Context, challenge *db.Chall
 	score, summary := cr.extractScoring(flowResult)
 
 	// Mark completed
-	cr.database.UpdateChallengeCompleted(challenge.ID, score, summary)
+	_ = cr.database.UpdateChallengeCompleted(challenge.ID, score, summary)
 
 	// Create moderation score from challenge result
 	modScore := cr.buildModerationScore(challenge, flowResult, score)
 	if modScore != nil {
-		cr.database.InsertModerationScore(*modScore)
+		_ = cr.database.InsertModerationScore(*modScore)
 	}
 
 	// Recalculate temperature
-	cr.database.RecalculateRootTemperature(challenge.NodeID)
+	_, _ = cr.database.RecalculateRootTemperature(challenge.NodeID)
 
 	return &ChallengeResult{
 		ChallengeID: challenge.ID,

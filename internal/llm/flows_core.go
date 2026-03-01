@@ -28,7 +28,7 @@ func SeedCoreWorkflows(flowsDB *db.FlowsDB, botUserID string, logger *slog.Logge
 	for _, seed := range seeds {
 		// Check if workflow already exists
 		var count int
-		flowsDB.QueryRow(`SELECT COUNT(*) FROM workflows WHERE name = ?`, seed.wf.Name).Scan(&count)
+		_ = flowsDB.QueryRow(`SELECT COUNT(*) FROM workflows WHERE name = ?`, seed.wf.Name).Scan(&count)
 		if count > 0 {
 			continue
 		}
@@ -37,9 +37,9 @@ func SeedCoreWorkflows(flowsDB *db.FlowsDB, botUserID string, logger *slog.Logge
 			logger.Warn("seed workflow insert", "name", seed.wf.Name, "error", err)
 			continue
 		}
-		for _, step := range seed.steps {
-			if err := flowsDB.CreateStep(&step); err != nil {
-				logger.Warn("seed workflow step insert", "workflow", seed.wf.Name, "step", step.StepName, "error", err)
+		for i := range seed.steps {
+			if err := flowsDB.CreateStep(&seed.steps[i]); err != nil {
+				logger.Warn("seed workflow step insert", "workflow", seed.wf.Name, "step", seed.steps[i].StepName, "error", err)
 			}
 		}
 		seeded++
@@ -47,9 +47,9 @@ func SeedCoreWorkflows(flowsDB *db.FlowsDB, botUserID string, logger *slog.Logge
 
 	// Seed the viability criteria list
 	var clCount int
-	flowsDB.QueryRow(`SELECT COUNT(*) FROM criteria_lists WHERE name = 'workflow_viability_thresholds'`).Scan(&clCount)
+	_ = flowsDB.QueryRow(`SELECT COUNT(*) FROM criteria_lists WHERE name = 'workflow_viability_thresholds'`).Scan(&clCount)
 	if clCount == 0 {
-		flowsDB.CreateCriteriaList(&db.CriteriaList{
+		_ = flowsDB.CreateCriteriaList(&db.CriteriaList{
 			ListID:      db.NewID(),
 			Name:        "workflow_viability_thresholds",
 			Description: "Threshold criteria for workflow validation audit",

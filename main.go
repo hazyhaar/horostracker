@@ -69,7 +69,7 @@ func cmdServe(args []string) {
 	configPath := fs.String("config", "", "path to config.toml")
 	addr := fs.String("addr", "", "listen address (overrides config)")
 	plainHTTP := fs.Bool("http", false, "plain HTTP mode (no TLS, no QUIC) for local dev")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -92,7 +92,7 @@ func cmdServe(args []string) {
 	flowsDB, err := db.OpenFlows(cfg.Database.FlowsPath)
 	if err != nil {
 		logger.Error("opening flows database", "error", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer acceptable in main()
 	}
 	defer flowsDB.Close()
 
@@ -113,8 +113,8 @@ func cmdServe(args []string) {
 
 	// --- MCP tool registry (flight control) ---
 	registry := mcprt.NewRegistry(sqlDB)
-	if err := registry.Init(); err != nil {
-		logger.Error("init MCP tool registry", "error", err)
+	if initErr := registry.Init(); initErr != nil {
+		logger.Error("init MCP tool registry", "error", initErr)
 		os.Exit(1)
 	}
 	horosmcp.SeedDefaultTools(sqlDB)
@@ -124,8 +124,8 @@ func cmdServe(args []string) {
 	defer cancel()
 
 	// Load dynamic tools + start watcher
-	if err := registry.LoadTools(ctx); err != nil {
-		logger.Warn("loading dynamic MCP tools", "error", err)
+	if loadErr := registry.LoadTools(ctx); loadErr != nil {
+		logger.Warn("loading dynamic MCP tools", "error", loadErr)
 	}
 	go registry.RunWatcher(ctx)
 
@@ -153,13 +153,13 @@ func cmdServe(args []string) {
 	var botUserID string
 	if cfg.Bot.Enabled {
 		botHash, _ := auth.New(cfg.Auth.JWTSecret, 0).HashPassword("bot-internal-" + cfg.Auth.JWTSecret)
-		botID, err := database.EnsureBotUser(cfg.Bot.Handle, botHash)
-		if err != nil {
-			logger.Error("creating bot user", "error", err)
+		botID, botErr := database.EnsureBotUser(cfg.Bot.Handle, botHash)
+		if botErr != nil {
+			logger.Error("creating bot user", "error", botErr)
 		} else {
 			botUserID = botID
 			// Ensure daily credit allowance
-			database.AddCredits(botID, cfg.Bot.CreditPerDay, "daily_allowance", "system", "startup")
+			_ = database.AddCredits(botID, cfg.Bot.CreditPerDay, "daily_allowance", "system", "startup")
 			logger.Info("bot user ready", "handle", cfg.Bot.Handle, "id", botID)
 		}
 	}
@@ -212,9 +212,9 @@ func cmdServe(args []string) {
 
 	// Count nodes for startup display
 	var nodeCount int
-	database.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
+	_ = database.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
 	var flowStepCount int
-	flowsDB.QueryRow("SELECT COUNT(*) FROM flow_steps").Scan(&flowStepCount)
+	_ = flowsDB.QueryRow("SELECT COUNT(*) FROM flow_steps").Scan(&flowStepCount)
 	workflowCount := flowsDB.CountWorkflows()
 
 	handler := api.SecurityHeaders(mux)
@@ -241,7 +241,7 @@ func cmdServe(args []string) {
 		shutdownFn = func() {
 			sCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer sCancel()
-			httpSrv.Shutdown(sCtx)
+			_ = httpSrv.Shutdown(sCtx)
 		}
 
 		go func() {
@@ -283,7 +283,7 @@ func cmdServe(args []string) {
 		shutdownFn = func() {
 			sCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer sCancel()
-			srv.Stop(sCtx)
+			_ = srv.Stop(sCtx)
 		}
 
 		go func() {
@@ -304,8 +304,6 @@ func cmdServe(args []string) {
 		}
 	}
 
-	if shutdownFn != nil {
-		shutdownFn()
-	}
+	shutdownFn()
 	logger.Info("horostracker stopped")
 }

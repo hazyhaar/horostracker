@@ -66,8 +66,8 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 		return "", fmt.Errorf("creating run: %w", err)
 	}
 
-	we.flowsDB.UpdateRunStatus(runID, "running", nil, nil)
-	we.flowsDB.InsertAuditLog(runID, "", "run_started", map[string]string{
+	_ = we.flowsDB.UpdateRunStatus(runID, "running", nil, nil)
+	_ = we.flowsDB.InsertAuditLog(runID, "", "run_started", map[string]string{
 		"workflow_id": workflowID,
 		"workflow_name": wf.Name,
 	})
@@ -92,7 +92,7 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 	for _, g := range groups {
 		if ctx.Err() != nil {
 			errMsg := "cancelled"
-			we.flowsDB.UpdateRunStatus(runID, "cancelled", nil, &errMsg)
+			_ = we.flowsDB.UpdateRunStatus(runID, "cancelled", nil, &errMsg)
 			return runID, ctx.Err()
 		}
 
@@ -100,12 +100,12 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 			// Sequential execution
 			if err := we.executeStepACID(ctx, runID, g.steps[0], execCtx, nil); err != nil {
 				errMsg := err.Error()
-				we.flowsDB.UpdateRunStatus(runID, "failed", nil, &errMsg)
-				return runID, nil // run is marked failed, not a system error
+				_ = we.flowsDB.UpdateRunStatus(runID, "failed", nil, &errMsg)
+				return runID, nil //nolint:nilerr // step error captured in DB, not propagated
 			}
 		} else {
 			// Fan-out: parallel execution via goroutines
-			we.flowsDB.InsertAuditLog(runID, "", "fan_out_started", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, "", "fan_out_started", map[string]interface{}{
 				"step_order": g.order,
 				"count":      len(g.steps),
 			})
@@ -115,7 +115,7 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 			fanResults := make(map[string]string)
 			var firstErr error
 
-			for _, step := range g.steps {
+			for i := range g.steps {
 				wg.Add(1)
 				go func(s db.WorkflowStep) {
 					defer wg.Done()
@@ -137,15 +137,15 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 					mu.Lock()
 					fanResults[s.StepName] = localCtx.responses[s.StepName]
 					mu.Unlock()
-				}(step)
+				}(g.steps[i])
 			}
 
-			we.flowsDB.InsertAuditLog(runID, "", "fan_in_waiting", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, "", "fan_in_waiting", map[string]interface{}{
 				"step_order": g.order,
 			})
 			wg.Wait()
 
-			we.flowsDB.InsertAuditLog(runID, "", "fan_in_completed", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, "", "fan_in_completed", map[string]interface{}{
 				"step_order": g.order,
 				"completed":  len(fanResults),
 			})
@@ -167,13 +167,15 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowID, nodeI
 	}
 	resultJSON, _ := json.Marshal(resultMap)
 	resultStr := string(resultJSON)
-	we.flowsDB.UpdateRunStatus(runID, "completed", &resultStr, nil)
-	we.flowsDB.InsertAuditLog(runID, "", "run_completed", nil)
+	_ = we.flowsDB.UpdateRunStatus(runID, "completed", &resultStr, nil)
+	_ = we.flowsDB.InsertAuditLog(runID, "", "run_completed", nil)
 
 	return runID, nil
 }
 
 // executeStepACID runs a single step in its own transaction with retry logic.
+//
+//nolint:unparam // fanResults is nil for sequential steps, non-nil for fan-in (future)
 func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, step db.WorkflowStep, execCtx *workflowExecCtx, fanResults map[string]string) error {
 	stepRunID := db.NewID()
 
@@ -185,7 +187,7 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 	}
 	inputJSON, _ := json.Marshal(inputMap)
 
-	we.flowsDB.InsertAuditLog(runID, stepRunID, "step_started", map[string]string{
+	_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_started", map[string]string{
 		"step_name": step.StepName,
 		"step_type": step.StepType,
 	})
@@ -199,7 +201,7 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 
 	// Insert step_run as running
 	inputStr := string(inputJSON)
-	we.flowsDB.Exec(`
+	_, _ = we.flowsDB.Exec(`
 		INSERT INTO workflow_step_runs (step_run_id, run_id, step_id, step_order, status, input_json, started_at)
 		VALUES (?, ?, ?, ?, 'running', ?, datetime('now'))`,
 		stepRunID, runID, step.StepID, step.StepOrder, inputStr)
@@ -208,10 +210,10 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 	if step.Model != "" {
 		if !we.flowsDB.ModelIsAvailable(step.Model) && we.flowsDB.ModelExists(step.Model) {
 			errMsg := fmt.Sprintf("model %s is no longer available", step.Model)
-			we.flowsDB.Exec(`
+			_, _ = we.flowsDB.Exec(`
 				UPDATE workflow_step_runs SET status = 'failed', error = ?, completed_at = datetime('now')
 				WHERE step_run_id = ?`, errMsg, stepRunID)
-			we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{
+			_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{
 				"error": errMsg, "reason": "model_unavailable",
 			})
 			return fmt.Errorf("%s", errMsg)
@@ -219,10 +221,10 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 		grantAllowed, explicit := we.flowsDB.CheckModelGrant(execCtx.userID, execCtx.userRole, step.Model, step.StepType)
 		if explicit && !grantAllowed {
 			errMsg := fmt.Sprintf("model grant denied: user %s cannot use %s for %s steps", execCtx.userID, step.Model, step.StepType)
-			we.flowsDB.Exec(`
+			_, _ = we.flowsDB.Exec(`
 				UPDATE workflow_step_runs SET status = 'failed', error = ?, completed_at = datetime('now')
 				WHERE step_run_id = ?`, errMsg, stepRunID)
-			we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{
+			_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{
 				"error": errMsg, "reason": "model_grant_denied",
 			})
 			return fmt.Errorf("%s", errMsg)
@@ -264,7 +266,7 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 		)
 
 		if attempt < step.RetryMax {
-			we.flowsDB.InsertAuditLog(runID, stepRunID, "step_retried", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_retried", map[string]interface{}{
 				"attempt": attempt,
 				"error":   stepErr.Error(),
 			})
@@ -274,23 +276,23 @@ func (we *WorkflowEngine) executeStepACID(ctx context.Context, runID string, ste
 
 	if stepErr != nil {
 		errMsg := stepErr.Error()
-		we.flowsDB.Exec(`
+		_, _ = we.flowsDB.Exec(`
 			UPDATE workflow_step_runs SET status = 'failed', error = ?, latency_ms = ?, attempt = ?, completed_at = datetime('now')
 			WHERE step_run_id = ?`,
 			errMsg, latencyMs, step.RetryMax, stepRunID)
-		we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{"error": errMsg})
+		_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_failed", map[string]string{"error": errMsg})
 		return stepErr
 	}
 
 	// Success: persist output
-	we.flowsDB.Exec(`
+	_, _ = we.flowsDB.Exec(`
 		UPDATE workflow_step_runs SET status = 'completed', output_json = ?,
 			model_used = ?, provider_used = ?, tokens_in = ?, tokens_out = ?,
 			latency_ms = ?, completed_at = datetime('now')
 		WHERE step_run_id = ?`,
 		output, nilIfEmpty(model), nilIfEmpty(provider), tokensIn, tokensOut, latencyMs, stepRunID)
-	we.flowsDB.IncrementCompletedSteps(runID)
-	we.flowsDB.InsertAuditLog(runID, stepRunID, "step_completed", map[string]interface{}{
+	_ = we.flowsDB.IncrementCompletedSteps(runID)
+	_ = we.flowsDB.InsertAuditLog(runID, stepRunID, "step_completed", map[string]interface{}{
 		"step_name":  step.StepName,
 		"provider":   provider,
 		"model":      model,
@@ -388,7 +390,7 @@ func (we *WorkflowEngine) executeHTTP(ctx context.Context, step db.WorkflowStep,
 	method := "GET"
 	var configMap map[string]string
 	if step.ConfigJSON != "" && step.ConfigJSON != "{}" {
-		json.Unmarshal([]byte(step.ConfigJSON), &configMap)
+		_ = json.Unmarshal([]byte(step.ConfigJSON), &configMap)
 		if m, ok := configMap["method"]; ok {
 			method = strings.ToUpper(m)
 		}
@@ -434,8 +436,8 @@ func (we *WorkflowEngine) executeCheck(ctx context.Context, step db.WorkflowStep
 	}
 
 	var items []string
-	if err := json.Unmarshal([]byte(cl.ItemsJSON), &items); err != nil {
-		return "", fmt.Errorf("parsing criteria items: %w", err)
+	if unmarshalErr := json.Unmarshal([]byte(cl.ItemsJSON), &items); unmarshalErr != nil {
+		return "", fmt.Errorf("parsing criteria items: %w", unmarshalErr)
 	}
 
 	// Build evaluation prompt
@@ -512,11 +514,11 @@ func renderWorkflowTemplate(tmpl string, ctx *workflowExecCtx) string {
 // groupSteps organizes steps by step_order.
 func groupSteps(steps []db.WorkflowStep) []stepGroup {
 	orderMap := make(map[int][]db.WorkflowStep)
-	for _, s := range steps {
-		orderMap[s.StepOrder] = append(orderMap[s.StepOrder], s)
+	for i := range steps {
+		orderMap[steps[i].StepOrder] = append(orderMap[steps[i].StepOrder], steps[i])
 	}
 
-	var groups []stepGroup
+	groups := make([]stepGroup, 0, len(orderMap))
 	for order, ss := range orderMap {
 		groups = append(groups, stepGroup{order: order, steps: ss})
 	}
@@ -562,8 +564,8 @@ func (we *WorkflowEngine) ExecuteWorkflowWithBody(ctx context.Context, workflowI
 		return "", fmt.Errorf("creating run: %w", err)
 	}
 
-	we.flowsDB.UpdateRunStatus(runID, "running", nil, nil)
-	we.flowsDB.InsertAuditLog(runID, "", "run_started", map[string]string{
+	_ = we.flowsDB.UpdateRunStatus(runID, "running", nil, nil)
+	_ = we.flowsDB.InsertAuditLog(runID, "", "run_started", map[string]string{
 		"workflow_id":   workflowID,
 		"workflow_name": wf.Name,
 	})
@@ -581,18 +583,18 @@ func (we *WorkflowEngine) ExecuteWorkflowWithBody(ctx context.Context, workflowI
 	for _, g := range groups {
 		if ctx.Err() != nil {
 			errMsg := "cancelled"
-			we.flowsDB.UpdateRunStatus(runID, "cancelled", nil, &errMsg)
+			_ = we.flowsDB.UpdateRunStatus(runID, "cancelled", nil, &errMsg)
 			return runID, ctx.Err()
 		}
 
 		if len(g.steps) == 1 {
 			if err := we.executeStepACID(ctx, runID, g.steps[0], execCtx, nil); err != nil {
 				errMsg := err.Error()
-				we.flowsDB.UpdateRunStatus(runID, "failed", nil, &errMsg)
-				return runID, nil
+				_ = we.flowsDB.UpdateRunStatus(runID, "failed", nil, &errMsg)
+				return runID, nil //nolint:nilerr // step error captured in DB, not propagated
 			}
 		} else {
-			we.flowsDB.InsertAuditLog(runID, "", "fan_out_started", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, "", "fan_out_started", map[string]interface{}{
 				"step_order": g.order,
 				"count":      len(g.steps),
 			})
@@ -601,7 +603,7 @@ func (we *WorkflowEngine) ExecuteWorkflowWithBody(ctx context.Context, workflowI
 			var mu sync.Mutex
 			fanResults := make(map[string]string)
 
-			for _, step := range g.steps {
+			for i := range g.steps {
 				wg.Add(1)
 				go func(s db.WorkflowStep) {
 					defer wg.Done()
@@ -618,12 +620,12 @@ func (we *WorkflowEngine) ExecuteWorkflowWithBody(ctx context.Context, workflowI
 					mu.Lock()
 					fanResults[s.StepName] = localCtx.responses[s.StepName]
 					mu.Unlock()
-				}(step)
+				}(g.steps[i])
 			}
 
 			wg.Wait()
 
-			we.flowsDB.InsertAuditLog(runID, "", "fan_in_completed", map[string]interface{}{
+			_ = we.flowsDB.InsertAuditLog(runID, "", "fan_in_completed", map[string]interface{}{
 				"step_order": g.order,
 				"completed":  len(fanResults),
 			})
@@ -643,8 +645,8 @@ func (we *WorkflowEngine) ExecuteWorkflowWithBody(ctx context.Context, workflowI
 	}
 	resultJSON, _ := json.Marshal(resultMap)
 	resultStr := string(resultJSON)
-	we.flowsDB.UpdateRunStatus(runID, "completed", &resultStr, nil)
-	we.flowsDB.InsertAuditLog(runID, "", "run_completed", nil)
+	_ = we.flowsDB.UpdateRunStatus(runID, "completed", &resultStr, nil)
+	_ = we.flowsDB.InsertAuditLog(runID, "", "run_completed", nil)
 
 	return runID, nil
 }

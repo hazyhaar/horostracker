@@ -37,7 +37,7 @@ func (p *GeminiProvider) Complete(ctx context.Context, req Request) (*Response, 
 
 	// Build Gemini request
 	var systemInstruction *geminiContent
-	var contents []geminiContent
+	contents := make([]geminiContent, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		if m.Role == "system" {
 			systemInstruction = &geminiContent{

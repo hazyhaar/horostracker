@@ -128,7 +128,7 @@ func (a *API) handleExportBenchmark(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="benchmark-`+id+`.json"`)
-	w.Write([]byte(results))
+	_, _ = w.Write([]byte(results))
 }
 
 func (a *API) handleReplayBenchmark(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +163,7 @@ func (a *API) handleReplayBenchmark(w http.ResponseWriter, r *http.Request) {
 
 	newID := db.NewID()
 	newModels, _ := json.Marshal(req.Models)
-	a.db.Exec(`INSERT INTO benchmarks (id, name, description, models, filter_min_score, flow_name, metrics, replay_from, created_by)
+	_, _ = a.db.Exec(`INSERT INTO benchmarks (id, name, description, models, filter_min_score, flow_name, metrics, replay_from, created_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		newID, "replay:"+name, "Replay of "+id, string(newModels), filterMinScore, flowName, metrics, id, claims.UserID)
 

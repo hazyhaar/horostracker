@@ -335,7 +335,7 @@ func (a *API) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	// Safety scoring
 	safetyResult := a.db.ScoreContent(req.Body)
-	a.db.SaveSafetyScore(node.ID, safetyResult)
+	_ = a.db.SaveSafetyScore(node.ID, safetyResult)
 
 	// If LLM is available, decompose via ALL providers in parallel for benchmarking
 	var decompositions []map[string]interface{}
@@ -408,12 +408,12 @@ func (a *API) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	// Safety scoring
 	safetyResult := a.db.ScoreContent(req.Body)
-	a.db.SaveSafetyScore(node.ID, safetyResult)
+	_ = a.db.SaveSafetyScore(node.ID, safetyResult)
 
 	// Marshal node to map and add safety_score
 	nodeJSON, _ := json.Marshal(node)
 	var resp map[string]interface{}
-	json.Unmarshal(nodeJSON, &resp)
+	_ = json.Unmarshal(nodeJSON, &resp)
 	resp["safety_score"] = safetyResult
 
 	jsonResp(w, http.StatusCreated, resp)
@@ -847,7 +847,7 @@ func (a *API) handleVoteSafetyPattern(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Up bool `json:"up"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -984,8 +984,8 @@ func (a *API) handleDecompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node.AuthorID != claims.UserID {
-		user, err := a.db.GetUserByID(claims.UserID)
-		if err != nil || user.Role != "operator" {
+		u, uErr := a.db.GetUserByID(claims.UserID)
+		if uErr != nil || u.Role != "operator" {
 			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -1026,8 +1026,8 @@ func (a *API) handleCreateAssertions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node.AuthorID != claims.UserID {
-		user, err := a.db.GetUserByID(claims.UserID)
-		if err != nil || user.Role != "operator" {
+		u, uErr := a.db.GetUserByID(claims.UserID)
+		if uErr != nil || u.Role != "operator" {
 			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -1045,7 +1045,7 @@ func (a *API) handleCreateAssertions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var created []*db.Node
+	created := make([]*db.Node, 0, len(req.Claims))
 	for _, text := range req.Claims {
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -1107,7 +1107,7 @@ func (a *API) handleAddSource(w http.ResponseWriter, r *http.Request) {
 		ContentText *string `json:"content_text"`
 		Title       *string `json:"title"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -1212,13 +1212,13 @@ func (a *API) handleGetSource5W1H(w http.ResponseWriter, r *http.Request) {
 func jsonResp(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func jsonError(w http.ResponseWriter, msg string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func computeSHA256(input string) string {
@@ -1268,7 +1268,7 @@ func DecomposeAllProviders(ctx context.Context, client *llm.Client, questionText
 		}(prov)
 	}
 
-	var results []map[string]interface{}
+	results := make([]map[string]interface{}, 0, len(providers))
 	for range providers {
 		r := <-ch
 		results = append(results, r.data)
@@ -1301,7 +1301,7 @@ Règles :
 - Une assertion = une seule idée vérifiable
 - Retourne UNIQUEMENT un tableau JSON de strings, sans commentaire
 
-Exemple :
+Example :
 Question : "Mon bailleur peut-il augmenter le loyer de 40% en zone tendue alors que le bail est encore en cours ?"
 Réponse : ["Le bailleur est soumis à l'encadrement des loyers en zone tendue", "Une augmentation de loyer en cours de bail est limitée à l'IRL", "Une augmentation de 40% dépasse le plafond légal de révision annuelle", "Le bail en cours protège le locataire contre les augmentations hors clause de révision"]`},
 			{Role: "user", Content: questionText},
@@ -1345,7 +1345,7 @@ Règles :
 - Une assertion = une seule idée vérifiable
 - Retourne UNIQUEMENT un tableau JSON de strings, sans commentaire
 
-Exemple :
+Example :
 Question : "Mon bailleur peut-il augmenter le loyer de 40% en zone tendue alors que le bail est encore en cours ?"
 Réponse : ["Le bailleur est soumis à l'encadrement des loyers en zone tendue", "Une augmentation de loyer en cours de bail est limitée à l'IRL", "Une augmentation de 40% dépasse le plafond légal de révision annuelle", "Le bail en cours protège le locataire contre les augmentations hors clause de révision"]`},
 			{Role: "user", Content: questionText},

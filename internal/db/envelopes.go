@@ -75,7 +75,7 @@ func (db *DB) CreateEnvelope(input CreateEnvelopeInput) (*Envelope, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
 		INSERT INTO envelopes (id, batch_id, source_type, source_user_id, source_node_id,
@@ -189,7 +189,7 @@ func (db *DB) DeliverTarget(envelopeID, targetID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
 		UPDATE envelope_targets SET status = 'delivered', delivered_at = datetime('now')
@@ -241,7 +241,7 @@ func (db *DB) FailTarget(envelopeID, targetID, errMsg string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
 		UPDATE envelope_targets SET status = 'failed', error = ?

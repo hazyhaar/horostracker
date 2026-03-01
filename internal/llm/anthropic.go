@@ -37,13 +37,13 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (*Respons
 
 	// Extract system message if present
 	var system string
-	var messages []anthropicMessage
+	messages := make([]anthropicMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		if m.Role == "system" {
 			system = m.Content
 			continue
 		}
-		messages = append(messages, anthropicMessage{Role: m.Role, Content: m.Content})
+		messages = append(messages, anthropicMessage(m))
 	}
 
 	body := anthropicRequest{

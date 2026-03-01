@@ -184,7 +184,7 @@ func (db *DB) CreateNode(input CreateNodeInput) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
 		INSERT INTO nodes (id, parent_id, root_id, slug, node_type, body, author_id, model_id, metadata, depth, origin_instance)
@@ -331,11 +331,12 @@ func (db *DB) voteOnce(userID, nodeID string, value int) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var existing int
 	err = tx.QueryRow("SELECT value FROM votes WHERE user_id = ? AND node_id = ?", userID, nodeID).Scan(&existing)
-	if err == nil {
+	switch {
+	case err == nil:
 		// Update existing vote
 		if existing == value {
 			return nil // same vote, no-op
@@ -346,13 +347,13 @@ func (db *DB) voteOnce(userID, nodeID string, value int) error {
 		}
 		diff := value - existing
 		_, err = tx.Exec("UPDATE nodes SET score = score + ?, updated_at = datetime('now') WHERE id = ?", diff, nodeID)
-	} else if err == sql.ErrNoRows {
+	case err == sql.ErrNoRows:
 		_, err = tx.Exec("INSERT INTO votes (user_id, node_id, value) VALUES (?, ?, ?)", userID, nodeID, value)
 		if err != nil {
 			return err
 		}
 		_, err = tx.Exec("UPDATE nodes SET score = score + ?, updated_at = datetime('now') WHERE id = ?", value, nodeID)
-	} else {
+	default:
 		return err
 	}
 	if err != nil {

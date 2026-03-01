@@ -121,7 +121,7 @@ func (a *API) handleGetDatasetProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Count runs
 	var runCount int
-	a.db.QueryRow(`SELECT COUNT(*) FROM dataset_runs WHERE profile_id = ?`, id).Scan(&runCount)
+	_ = a.db.QueryRow(`SELECT COUNT(*) FROM dataset_runs WHERE profile_id = ?`, id).Scan(&runCount)
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"id": id, "name": name, "filters": filters, "options": options,
@@ -163,14 +163,14 @@ func (a *API) handleRunDatasetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runID := db.NewID()
-	a.db.Exec(`INSERT INTO dataset_runs (id, profile_id, status) VALUES (?, ?, 'running')`, runID, profileID)
+	_, _ = a.db.Exec(`INSERT INTO dataset_runs (id, profile_id, status) VALUES (?, ?, 'running')`, runID, profileID)
 
 	// Count matching nodes (simplified: all nodes for now)
 	var nodeCount int
-	a.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount)
+	_ = a.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount)
 
 	// Mark completed immediately for sync export
-	a.db.Exec(`UPDATE dataset_runs SET status = 'completed', row_count = ?, completed_at = datetime('now') WHERE id = ?`,
+	_, _ = a.db.Exec(`UPDATE dataset_runs SET status = 'completed', row_count = ?, completed_at = datetime('now') WHERE id = ?`,
 		nodeCount, runID)
 
 	jsonResp(w, http.StatusAccepted, map[string]interface{}{

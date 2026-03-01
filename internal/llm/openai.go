@@ -65,7 +65,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req Request) (*Response, 
 		Messages: make([]openAIMessage, len(req.Messages)),
 	}
 	for i, m := range req.Messages {
-		body.Messages[i] = openAIMessage{Role: m.Role, Content: m.Content}
+		body.Messages[i] = openAIMessage(m)
 	}
 	if req.Temperature > 0 {
 		body.Temperature = &req.Temperature

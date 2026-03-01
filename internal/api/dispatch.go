@@ -49,7 +49,7 @@ func (a *API) handleDispatch(w http.ResponseWriter, r *http.Request) {
 	// Persist dispatch record
 	if req.Persist && a.flowsDB != nil {
 		modelsJSON, _ := json.Marshal(req.Models)
-		a.flowsDB.Exec(`INSERT INTO dispatches (id, prompt_hash, models, status) VALUES (?, ?, ?, 'running')`,
+		_, _ = a.flowsDB.Exec(`INSERT INTO dispatches (id, prompt_hash, models, status) VALUES (?, ?, ?, 'running')`,
 			dispatchID, hashPrompt(req.Prompt), string(modelsJSON))
 	}
 
@@ -117,7 +117,7 @@ func (a *API) handleDispatch(w http.ResponseWriter, r *http.Request) {
 				if resp != nil {
 					content = resp.Content
 				}
-				a.flowsDB.Exec(`INSERT INTO flow_steps (id, flow_id, step_index, model_id, provider,
+				_, _ = a.flowsDB.Exec(`INSERT INTO flow_steps (id, flow_id, step_index, model_id, provider,
 					prompt, system_prompt, response_raw, response_parsed,
 					tokens_in, tokens_out, latency_ms, dispatch_id, error)
 					VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -133,7 +133,7 @@ func (a *API) handleDispatch(w http.ResponseWriter, r *http.Request) {
 
 	// Update dispatch status
 	if req.Persist && a.flowsDB != nil {
-		a.flowsDB.Exec(`UPDATE dispatches SET status = 'completed', completed_at = datetime('now') WHERE id = ?`, dispatchID)
+		_, _ = a.flowsDB.Exec(`UPDATE dispatches SET status = 'completed', completed_at = datetime('now') WHERE id = ?`, dispatchID)
 	}
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{

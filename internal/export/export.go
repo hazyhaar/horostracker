@@ -236,7 +236,7 @@ type anonMap struct {
 
 func newAnonMap() *anonMap {
 	salt := make([]byte, 16)
-	rand.Read(salt)
+	_, _ = rand.Read(salt)
 	return &anonMap{
 		mapping: make(map[string]string),
 		salt:    hex.EncodeToString(salt),

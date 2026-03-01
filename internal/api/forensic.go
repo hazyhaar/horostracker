@@ -127,11 +127,11 @@ func (a *API) handleForensicModel(w http.ResponseWriter, r *http.Request) {
 	}{}
 
 	if totalCalls > 0 {
-		a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
+		_ = a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
 			modelID, totalCalls/2).Scan(&latencies.P50)
-		a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
+		_ = a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
 			modelID, totalCalls*95/100).Scan(&latencies.P95)
-		a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
+		_ = a.flowsDB.QueryRow(`SELECT latency_ms FROM flow_steps WHERE model_id = ? AND latency_ms > 0 ORDER BY latency_ms LIMIT 1 OFFSET ?`,
 			modelID, totalCalls*99/100).Scan(&latencies.P99)
 	}
 

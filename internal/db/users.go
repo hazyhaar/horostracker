@@ -80,7 +80,7 @@ func (db *DB) AddCredits(userID string, amount int, reason, refType, refID strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var balance int
 	err = tx.QueryRow("SELECT credits FROM users WHERE id = ?", userID).Scan(&balance)
@@ -110,7 +110,7 @@ func (db *DB) DebitCredits(userID string, amount int, reason, refType, refID str
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var balance int
 	err = tx.QueryRow("SELECT credits FROM users WHERE id = ?", userID).Scan(&balance)
@@ -139,7 +139,7 @@ func (db *DB) DebitCredits(userID string, amount int, reason, refType, refID str
 
 // IncrementViewCount bumps a node's view count.
 func (db *DB) IncrementViewCount(nodeID string) {
-	db.Exec("UPDATE nodes SET view_count = view_count + 1 WHERE id = ?", nodeID)
+	_, _ = db.Exec("UPDATE nodes SET view_count = view_count + 1 WHERE id = ?", nodeID)
 }
 
 func (db *DB) GetUserByHandle(handle string) (*User, string, error) {

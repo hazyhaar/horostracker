@@ -75,7 +75,7 @@ func (a *API) handleProviderList(w http.ResponseWriter, r *http.Request) {
 			var name, modelsJSON string
 			if rows.Scan(&name, &modelsJSON) == nil {
 				var models []string
-				json.Unmarshal([]byte(modelsJSON), &models)
+				_ = json.Unmarshal([]byte(modelsJSON), &models)
 				if len(models) > 0 {
 					result[name] = models
 				}

@@ -213,14 +213,14 @@ func scanGrants(rows *sql.Rows) ([]ModelGrant, error) {
 // ModelExists returns true if the model_id exists in available_models.
 func (db *FlowsDB) ModelExists(modelID string) bool {
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM available_models WHERE model_id = ?`, modelID).Scan(&count)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM available_models WHERE model_id = ?`, modelID).Scan(&count)
 	return count > 0
 }
 
 // ModelIsAvailable returns true if the model exists and is_available = 1.
 func (db *FlowsDB) ModelIsAvailable(modelID string) bool {
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM available_models WHERE model_id = ? AND is_available = 1`, modelID).Scan(&count)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM available_models WHERE model_id = ? AND is_available = 1`, modelID).Scan(&count)
 	return count > 0
 }
 
@@ -284,12 +284,12 @@ func (db *FlowsDB) BulkSetGrants(modelIDs, grantOperatorIDs, revokeOperatorIDs [
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Revoke: delete existing grants for revoke list
 	for _, opID := range revokeOperatorIDs {
 		for _, modelID := range modelIDs {
-			tx.Exec(`DELETE FROM model_grants
+			_, _ = tx.Exec(`DELETE FROM model_grants
 				WHERE grantee_type = 'user' AND grantee_id = ? AND model_id = ? AND step_type = '*'`,
 				opID, modelID)
 		}
@@ -299,7 +299,7 @@ func (db *FlowsDB) BulkSetGrants(modelIDs, grantOperatorIDs, revokeOperatorIDs [
 	for _, opID := range grantOperatorIDs {
 		for _, modelID := range modelIDs {
 			grantID := NewID()
-			tx.Exec(`INSERT INTO model_grants (grant_id, grantee_type, grantee_id, model_id, step_type, effect, created_by)
+			_, _ = tx.Exec(`INSERT INTO model_grants (grant_id, grantee_type, grantee_id, model_id, step_type, effect, created_by)
 				VALUES (?, 'user', ?, ?, '*', 'allow', ?)
 				ON CONFLICT(grantee_type, grantee_id, model_id, step_type) DO NOTHING`,
 				grantID, opID, modelID, createdBy)

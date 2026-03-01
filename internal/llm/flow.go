@@ -107,6 +107,7 @@ func (e *FlowEngine) Execute(ctx context.Context, flow FlowConfig, fctx FlowCont
 	return result, nil
 }
 
+//nolint:unparam // index reserved for step-level persistence
 func (e *FlowEngine) executeStep(ctx context.Context, step FlowStep, fctx *FlowContext, index int) (StepResult, error) {
 	// Resolve provider and model
 	provider := step.Provider
@@ -181,7 +182,7 @@ func (e *FlowEngine) persistStep(fctx FlowContext, step FlowStep, sr StepResult,
 	prompt := renderTemplate(step.Prompt, &fctx)
 	systemPrompt := renderTemplate(step.System, &fctx)
 
-	e.flowsDB.Exec(`
+	_, _ = e.flowsDB.Exec(`
 		INSERT INTO flow_steps (id, flow_id, step_index, node_id, model_id, provider,
 			prompt, system_prompt, response_raw, response_parsed,
 			tokens_in, tokens_out, latency_ms, finish_reason, error)

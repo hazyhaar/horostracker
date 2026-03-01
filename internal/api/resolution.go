@@ -59,7 +59,7 @@ func (a *API) handleGenerateResolution(w http.ResponseWriter, r *http.Request) {
 		Provider string `json:"provider"`
 		Model    string `json:"model"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	// Get the full tree
 	tree, err := a.db.GetTree(nodeID, 100)
@@ -103,7 +103,7 @@ func (a *API) handleGenerateResolution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upsert into resolutions table for tracking per provider/model
-	a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
+	_, _ = a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_id, provider, model)
 		DO UPDATE SET content=excluded.content, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, latency_ms=excluded.latency_ms, updated_at=datetime('now')`,
@@ -194,7 +194,7 @@ func (a *API) handleRenderResolution(w http.ResponseWriter, r *http.Request) {
 
 	// Store in renders table
 	renderID := db.NewID()
-	a.db.Exec(`INSERT INTO renders (id, resolution_id, format, model_id, content, fidelity_score)
+	_, _ = a.db.Exec(`INSERT INTO renders (id, resolution_id, format, model_id, content, fidelity_score)
 		VALUES (?, ?, ?, ?, ?, NULL)`, renderID, resolutionID, req.Format, result.Model, result.Content)
 
 	jsonResp(w, http.StatusCreated, map[string]interface{}{
@@ -330,7 +330,7 @@ func (a *API) handleGetUnresolved(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var count int
-		a.db.QueryRow("SELECT COUNT(*) FROM resolutions WHERE node_id = ? AND provider = ? AND model = ?",
+		_ = a.db.QueryRow("SELECT COUNT(*) FROM resolutions WHERE node_id = ? AND provider = ? AND model = ?",
 			n.ID, provider, model).Scan(&count)
 		if count == 0 {
 			unresolved = append(unresolved, n)
@@ -380,7 +380,7 @@ func (a *API) handleBatchResolution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var succeeded, failed int
-	var results []map[string]interface{}
+	results := make([]map[string]interface{}, 0, len(req.NodeIDs))
 
 	for _, nodeID := range req.NodeIDs {
 		tree, err := a.db.GetTree(nodeID, 100)
@@ -425,7 +425,7 @@ func (a *API) handleBatchResolution(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Upsert into resolutions table
-		a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
+		_, _ = a.db.Exec(`INSERT INTO resolutions (id, node_id, provider, model, content, tokens_in, tokens_out, latency_ms)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(node_id, provider, model)
 			DO UPDATE SET content=excluded.content, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, latency_ms=excluded.latency_ms, updated_at=datetime('now')`,

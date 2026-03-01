@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
 
 // RecordHTTPRequest logs an HTTP request metric.
 func (db *MetricsDB) RecordHTTPRequest(method, path string, statusCode, durationMs int, userID string) {
-	db.Exec(`INSERT INTO http_requests (method, path, status_code, duration_ms, user_id)
+	_, _ = db.Exec(`INSERT INTO http_requests (method, path, status_code, duration_ms, user_id)
 		VALUES (?, ?, ?, ?, ?)`, method, path, statusCode, durationMs, userID)
 }
 
@@ -110,6 +110,6 @@ func (db *MetricsDB) RecordLLMCall(provider, model string, tokensIn, tokensOut, 
 	if !success {
 		s = 0
 	}
-	db.Exec(`INSERT INTO llm_calls (provider, model, tokens_in, tokens_out, latency_ms, success, error)
+	_, _ = db.Exec(`INSERT INTO llm_calls (provider, model, tokens_in, tokens_out, latency_ms, success, error)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, provider, model, tokensIn, tokensOut, latencyMs, s, errMsg)
 }

@@ -216,7 +216,7 @@ func (a *API) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		StepCount   int    `json:"step_count"`
 	}
-	var result []flowInfo
+	result := make([]flowInfo, 0, len(flows))
 	for _, f := range flows {
 		result = append(result, flowInfo{
 			Name:        f.Name,

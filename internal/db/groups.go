@@ -134,13 +134,13 @@ func (db *FlowsDB) ListUngroupedOperators(nodesDB *sql.DB, providerID string) ([
 	var allOps []string
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, scanErr
 		}
 		allOps = append(allOps, id)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
 	}
 
 	// Get IDs that are in at least one group of this provider

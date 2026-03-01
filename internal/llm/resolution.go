@@ -24,6 +24,8 @@ func NewResolutionEngine(client *Client, flowsDB *db.FlowsDB, logger *slog.Logge
 
 // GenerateResolution produces a structured dialogue from a proof tree.
 // The tree is serialized to text, then an LLM synthesizes it into a Resolution.
+//
+//nolint:misspell // French-language LLM prompts
 func (e *ResolutionEngine) GenerateResolution(ctx context.Context, tree *db.Node, provider, model string) (*ResolutionResult, error) {
 	treeText := serializeTree(tree, 0)
 	if treeText == "" {
@@ -82,7 +84,7 @@ Règles :
 	if e.flowsDB != nil {
 		stepID := db.NewID()
 		flowID := "res_" + db.NewID()
-		e.flowsDB.Exec(`
+		_, _ = e.flowsDB.Exec(`
 			INSERT INTO flow_steps (id, flow_id, step_index, node_id, model_id, provider,
 				prompt, system_prompt, response_raw, response_parsed,
 				tokens_in, tokens_out, latency_ms, finish_reason)
@@ -116,6 +118,8 @@ type ResolutionResult struct {
 }
 
 // RenderResolution transforms a Resolution into a specific format.
+//
+//nolint:misspell // French-language LLM prompts
 func (e *ResolutionEngine) RenderResolution(ctx context.Context, resolution string, format string, provider, model string) (*RenderResult, error) {
 	prompts := map[string]string{
 		"article": "Transforme cette Résolution en un article clair et lisible, avec titre, chapô, et paragraphes structurés. Conserve toutes les sources et nuances.",

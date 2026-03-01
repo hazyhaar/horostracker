@@ -56,12 +56,12 @@ func (md *ModelDiscovery) DiscoverAll(ctx context.Context) {
 				"provider", ep.name,
 				"error", err,
 			)
-			md.flowsDB.MarkAllUnavailableForProvider(ep.name)
+			_ = md.flowsDB.MarkAllUnavailableForProvider(ep.name)
 			continue
 		}
 
 		for _, m := range models {
-			md.flowsDB.UpsertModel(m)
+			_ = md.flowsDB.UpsertModel(m)
 		}
 		totalDiscovered += len(models)
 
@@ -71,7 +71,7 @@ func (md *ModelDiscovery) DiscoverAll(ctx context.Context) {
 		)
 	}
 
-	md.flowsDB.InsertAuditLog("", "", "model_discovered", map[string]interface{}{
+	_ = md.flowsDB.InsertAuditLog("", "", "model_discovered", map[string]interface{}{
 		"total_models": totalDiscovered,
 	})
 }
@@ -155,7 +155,7 @@ func (md *ModelDiscovery) discoverOpenAI(ctx context.Context, ep providerEndpoin
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
-	var models []*db.AvailableModel
+	models := make([]*db.AvailableModel, 0, len(result.Data))
 	for _, m := range result.Data {
 		modelID := ep.name + "/" + m.ID
 		models = append(models, &db.AvailableModel{
@@ -198,7 +198,7 @@ func (md *ModelDiscovery) discoverGemini(ctx context.Context, ep providerEndpoin
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
-	var models []*db.AvailableModel
+	models := make([]*db.AvailableModel, 0, len(result.Models))
 	for _, m := range result.Models {
 		// Gemini model names look like "models/gemini-2.0-flash"
 		modelName := strings.TrimPrefix(m.Name, "models/")
@@ -217,6 +217,8 @@ func (md *ModelDiscovery) discoverGemini(ctx context.Context, ep providerEndpoin
 }
 
 // discoverAnthropic returns a hardcoded list (no API endpoint for listing).
+//
+//nolint:unparam // ep kept for interface consistency with discoverOpenAI/discoverGemini
 func (md *ModelDiscovery) discoverAnthropic(ep providerEndpoint) ([]*db.AvailableModel, error) {
 	knownModels := []struct {
 		id      string
@@ -228,7 +230,7 @@ func (md *ModelDiscovery) discoverAnthropic(ep providerEndpoint) ([]*db.Availabl
 		{"claude-opus-4-6", "Claude Opus 4.6", 200000},
 	}
 
-	var models []*db.AvailableModel
+	models := make([]*db.AvailableModel, 0, len(knownModels))
 	for _, m := range knownModels {
 		modelID := "anthropic/" + m.id
 		display := m.display

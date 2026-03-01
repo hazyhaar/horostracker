@@ -475,7 +475,7 @@ func (a *API) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.flowsDB.InsertAuditLog("", "", "validation_requested", map[string]string{
+	_ = a.flowsDB.InsertAuditLog("", "", "validation_requested", map[string]string{
 		"workflow_id":  wfID,
 		"submitted_by": claims.UserID,
 	})
@@ -507,7 +507,7 @@ func (a *API) handleActivateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.flowsDB.InsertAuditLog("", "", "validation_approved", map[string]string{
+	_ = a.flowsDB.InsertAuditLog("", "", "validation_approved", map[string]string{
 		"workflow_id":  wfID,
 		"activated_by": claims.UserID,
 	})
@@ -570,9 +570,9 @@ func (a *API) handleRunWorkflow(w http.ResponseWriter, r *http.Request) {
 	role := a.getUserRole(userID)
 	go func() {
 		if req.Body != "" {
-			a.workflowEngine.ExecuteWorkflowWithBody(r.Context(), wfID, req.NodeID, userID, role, req.PrePrompt, req.Body)
+			_, _ = a.workflowEngine.ExecuteWorkflowWithBody(r.Context(), wfID, req.NodeID, userID, role, req.PrePrompt, req.Body)
 		} else {
-			a.workflowEngine.ExecuteWorkflow(r.Context(), wfID, req.NodeID, userID, role, req.PrePrompt)
+			_, _ = a.workflowEngine.ExecuteWorkflow(r.Context(), wfID, req.NodeID, userID, role, req.PrePrompt)
 		}
 	}()
 
@@ -636,9 +636,9 @@ func (a *API) handleBatchRun(w http.ResponseWriter, r *http.Request) {
 	for _, wfID := range req.WorkflowIDs {
 		go func(id string) {
 			if req.Body != "" {
-				a.workflowEngine.ExecuteWorkflowWithBody(r.Context(), id, req.NodeID, userID, role, req.PrePrompt, req.Body)
+				_, _ = a.workflowEngine.ExecuteWorkflowWithBody(r.Context(), id, req.NodeID, userID, role, req.PrePrompt, req.Body)
 			} else {
-				a.workflowEngine.ExecuteWorkflow(r.Context(), id, req.NodeID, userID, role, req.PrePrompt)
+				_, _ = a.workflowEngine.ExecuteWorkflow(r.Context(), id, req.NodeID, userID, role, req.PrePrompt)
 			}
 		}(wfID)
 	}

@@ -57,11 +57,11 @@ func (a *API) handleIntegrity(w http.ResponseWriter, r *http.Request) {
 	flowStepCount := 0
 
 	row := a.db.QueryRow("SELECT COUNT(*) FROM nodes")
-	row.Scan(&nodeCount)
+	_ = row.Scan(&nodeCount)
 
 	if a.flowsDB != nil {
 		row = a.flowsDB.QueryRow("SELECT COUNT(*) FROM flow_steps")
-		row.Scan(&flowStepCount)
+		_ = row.Scan(&flowStepCount)
 	}
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{

@@ -84,7 +84,7 @@ func (a *API) handleDedupCheck(w http.ResponseWriter, r *http.Request) {
 	// Check if there's an existing cluster for exact matches
 	var clusterID string
 	if len(matches) > 0 {
-		a.db.QueryRow(`SELECT cluster_id FROM dedup_members WHERE node_id = ? LIMIT 1`, matches[0].NodeID).Scan(&clusterID)
+		_ = a.db.QueryRow(`SELECT cluster_id FROM dedup_members WHERE node_id = ? LIMIT 1`, matches[0].NodeID).Scan(&clusterID)
 	}
 
 	jsonResp(w, http.StatusOK, map[string]interface{}{
@@ -218,13 +218,17 @@ func trigramSimilarity(a, b string) float64 {
 	return float64(intersection) / float64(union)
 }
 
-// CreateDedupCluster creates a dedup cluster for a set of nodes.
-func (a *API) createDedupCluster(canonicalID, method string, members []struct{ nodeID string; similarity float64 }) string {
+// createDedupCluster creates a dedup cluster for a set of nodes.
+// nolint:unused // planned for dedup v2
+func (a *API) createDedupCluster(canonicalID, method string, members []struct {
+	nodeID     string
+	similarity float64
+}) string {
 	clusterID := db.NewID()
-	a.db.Exec(`INSERT INTO dedup_clusters (id, canonical_id, method) VALUES (?, ?, ?)`, clusterID, canonicalID, method)
+	_, _ = a.db.Exec(`INSERT INTO dedup_clusters (id, canonical_id, method) VALUES (?, ?, ?)`, clusterID, canonicalID, method)
 
 	for _, m := range members {
-		a.db.Exec(`INSERT OR IGNORE INTO dedup_members (cluster_id, node_id, similarity) VALUES (?, ?, ?)`,
+		_, _ = a.db.Exec(`INSERT OR IGNORE INTO dedup_members (cluster_id, node_id, similarity) VALUES (?, ?, ?)`,
 			clusterID, m.nodeID, m.similarity)
 	}
 

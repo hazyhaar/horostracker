@@ -74,10 +74,10 @@ func (re *ReplayEngine) ReplayStep(ctx context.Context, stepID, provider, model 
 
 	if err != nil {
 		result.Error = err.Error()
-		// Still persist the failed replay
+		// Still persist the failed replay — LLM failure is not a system error
 		replayID := re.persistReplay(orig, result, provider, model)
 		result.ReplayStepID = replayID
-		return result, nil
+		return result, nil //nolint:nilerr // LLM error captured in result.Error, not propagated
 	}
 
 	result.Content = resp.Content
@@ -137,7 +137,7 @@ func (re *ReplayEngine) ReplayBulk(ctx context.Context, batchID, filterModel, re
 	}
 
 	// Create batch record
-	re.flowsDB.Exec(`INSERT INTO replay_batches (id, original_model, replay_model, scope, filter_tag, total_steps, status)
+	_, _ = re.flowsDB.Exec(`INSERT INTO replay_batches (id, original_model, replay_model, scope, filter_tag, total_steps, status)
 		VALUES (?, ?, ?, ?, ?, ?, 'running')`,
 		batchID, filterModel, replayProvider+"/"+replayModel, "filtered", filterTag, len(stepIDs))
 
@@ -201,7 +201,7 @@ func (re *ReplayEngine) persistReplay(orig *originalStep, result *ReplayResult, 
 		errStr = result.Error
 	}
 
-	re.flowsDB.Exec(`
+	_, _ = re.flowsDB.Exec(`
 		INSERT INTO flow_steps (id, flow_id, step_index, node_id, model_id, provider,
 			prompt, system_prompt, response_raw, response_parsed,
 			tokens_in, tokens_out, latency_ms, replay_of_id, error)
@@ -216,7 +216,7 @@ func (re *ReplayEngine) persistReplay(orig *originalStep, result *ReplayResult, 
 }
 
 func (re *ReplayEngine) updateBatch(batchID string, result *ReplayBatchResult) {
-	re.flowsDB.Exec(`UPDATE replay_batches SET status = ?, improvements = ?, regressions = ?, unchanged = ?, completed_at = datetime('now')
+	_, _ = re.flowsDB.Exec(`UPDATE replay_batches SET status = ?, improvements = ?, regressions = ?, unchanged = ?, completed_at = datetime('now')
 		WHERE id = ?`,
 		result.Status, result.Completed, result.Failed, result.TotalSteps-result.Completed-result.Failed, batchID)
 }

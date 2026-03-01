@@ -73,7 +73,7 @@ func (a *API) handleReplayBulk(w http.ResponseWriter, r *http.Request) {
 
 	// Run async
 	go func() {
-		a.replayEngine.ReplayBulk(r.Context(), batchID, req.FilterModel, req.Provider, req.ReplayModel, req.FilterTag)
+		_, _ = a.replayEngine.ReplayBulk(r.Context(), batchID, req.FilterModel, req.Provider, req.ReplayModel, req.FilterTag)
 	}()
 
 	jsonResp(w, http.StatusAccepted, map[string]string{
