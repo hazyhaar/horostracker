@@ -2,6 +2,9 @@ data/
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
+.env
+.env.local
 horostracker
 config.toml
 *.exe
